@@ -21,7 +21,7 @@ import (
 )
 
 type entry struct {
-	id   int64
+	ID   int64
 	name string
 	data []byte
 	cb   func(err error)
@@ -33,7 +33,7 @@ const (
 )
 
 var entriesPool = sync.Pool{New: func() interface{} {
-	return make([]entry, 64)
+	return make([]*entry, 64)
 }}
 
 func (e *entry) size() int {
@@ -54,7 +54,7 @@ func (e *entry) write(writer io.Writer) error {
 	if err := binary.Write(writer, binary.BigEndian, uint32(len(e.data))); err != nil {
 		return err
 	}
-	if err := binary.Write(writer, binary.BigEndian, e.id); err != nil {
+	if err := binary.Write(writer, binary.BigEndian, e.ID); err != nil {
 		return err
 	}
 	if _, err := writer.Write([]byte(e.name)); err != nil {
@@ -77,7 +77,7 @@ func decodeEntry(buf []byte) (*entry, error) {
 	if err := binary.Read(reader, binary.BigEndian, &dataLen); err != nil {
 		return nil, err
 	}
-	if err := binary.Read(reader, binary.BigEndian, &e.id); err != nil {
+	if err := binary.Read(reader, binary.BigEndian, &e.ID); err != nil {
 		return nil, err
 	}
 	if nameLen > maxNameLen {

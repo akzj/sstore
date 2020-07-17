@@ -14,7 +14,7 @@
 package sstore
 
 //memory stream
-type mstream struct {
+type mStream struct {
 	name   string
 	begin  int64
 	end    int64
@@ -22,12 +22,22 @@ type mstream struct {
 	blocks []block
 }
 
-func (m *mstream) ReadAt(p []byte, off int64) (n int, err error) {
+func newMStream(begin int64, name string) *mStream {
+	return &mStream{
+		name:   name,
+		begin:  begin,
+		end:    begin,
+		size:   0,
+		blocks: nil,
+	}
+}
+
+func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 	panic("implement me")
 }
 
-func (m *mstream) Write(p []byte) (n int, err error) {
-	return len(p), nil
+func (m *mStream) Write(p []byte) int64 {
+	return m.end
 }
 
 const blockSize = 4 * 1024

@@ -18,11 +18,22 @@ import (
 	"os"
 )
 
+const version = "1.0.0"
+
+type walHeader struct {
+	Version      string
+	Filename     string
+	FirstEntryID int64
+	LastEntryID  int64
+}
+
 // write ahead log
 type wal struct {
+	size   int64
 	f      *os.File
 	bCap   int
 	buffer *bytes.Buffer
+	header walHeader
 }
 
 func openWal(filename string) *wal {
@@ -33,10 +44,16 @@ func createWal(filename string) *wal {
 	return &wal{}
 }
 
+func (wal *wal) getHeader() walHeader {
+	return wal.header
+}
+
 func (wal *wal) flush() error {
 	if wal.buffer.Len() > 0 {
-		if _, err := wal.f.Write(wal.buffer.Bytes()); err != nil {
+		if n, err := wal.f.Write(wal.buffer.Bytes()); err != nil {
 			return err
+		} else {
+			wal.size += int64(n)
 		}
 		wal.buffer.Reset()
 	}
@@ -47,11 +64,26 @@ func (wal *wal) sync() error {
 	return wal.f.Sync()
 }
 
-func (wal *wal) write(entry entry) error {
-	if wal.buffer.Len() > wal.bCap {
+func (wal *wal) write(e *entry) error {
+	wal.header.LastEntryID = e.ID
+	if wal.header.FirstEntryID == -1 {
+		wal.header.FirstEntryID = e.ID
+	}
+	if wal.buffer.Len()+len(e.data) > wal.bCap {
 		if err := wal.flush(); err != nil {
 			return err
 		}
+		if len(e.data) > wal.bCap {
+			if err := e.write(wal.f); err != nil {
+				return err
+			}
+			wal.size += int64(e.size())
+			return nil
+		}
 	}
-	return entry.write(wal.buffer)
+	if err := e.write(wal.buffer); err != nil {
+		return err
+	}
+	wal.size += int64(e.size())
+	return nil
 }

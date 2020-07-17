@@ -54,7 +54,7 @@ func (sstore *SStore) Append(name string, data []byte) error {
 //AsyncAppend async append the data to end of the stream
 func (sstore *SStore) AsyncAppend(name string, data []byte, cb func(err error)) {
 	sstore.getEntryQueue(name).put(entry{
-		id:   sstore.nextEntryID(),
+		ID:   sstore.nextEntryID(),
 		name: name,
 		data: data,
 		cb:   cb,

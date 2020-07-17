@@ -13,28 +13,31 @@
 
 package sstore
 
-import "log"
-
-type walWriter struct {
-	wal    *wal
-	queue  *entryQueue
-	commit *entryQueue
+type flusher struct {
+	items chan func()
 }
 
-func (worker *walWriter) start() {
+func newFlusher() {
+
+}
+
+func (flusher *flusher) append(table *mStreamTable, cb func(err error)) {
+	flusher.items <- func() {
+		go cb(flusher.flushMStreamTable(table))
+	}
+}
+
+func (flusher *flusher) flushMStreamTable(table *mStreamTable) error {
+	return nil
+}
+
+func (flusher *flusher) start() {
 	go func() {
 		for {
-			var entryBuffer = entriesPool.Get().([]entry)
-			entries := worker.queue.take(entryBuffer)
-			for _, it := range entries {
-				if err := worker.wal.write(it); err != nil {
-					it.cb(err)
-				}
+			select {
+			case f := <-flusher.items:
+				f()
 			}
-			if err := worker.wal.flush(); err != nil {
-				log.Fatal(err.Error())
-			}
-			worker.commit.putEntries(entries)
 		}
 	}()
 }
