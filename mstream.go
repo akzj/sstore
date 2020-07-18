@@ -13,11 +13,16 @@
 
 package sstore
 
+import (
+	"io"
+	"sync"
+)
+
 //memory stream
 type mStream struct {
+	locker sync.RWMutex
 	name   string
-	begin  int64
-	end    int64
+	base   int64
 	size   int64
 	blocks []block
 }
@@ -25,8 +30,7 @@ type mStream struct {
 func newMStream(begin int64, name string) *mStream {
 	return &mStream{
 		name:   name,
-		begin:  begin,
-		end:    begin,
+		base:   begin,
 		size:   0,
 		blocks: nil,
 	}
@@ -37,7 +41,21 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 }
 
 func (m *mStream) Write(p []byte) int64 {
-	return m.end
+	return m.base + m.size
+}
+
+func (m *mStream) writeTo(writer io.Writer) (int, error) {
+	m.locker.RLock()
+	defer m.locker.RUnlock()
+	var n int
+	for i := range m.blocks {
+		ret, err := (&m.blocks[i]).writeTo(writer)
+		n += ret
+		if err != nil {
+			return n, err
+		}
+	}
+	return n,nil
 }
 
 const blockSize = 4 * 1024
@@ -45,5 +63,10 @@ const blockSize = 4 * 1024
 type block struct {
 	begin int64
 	buf   []byte
+	pos   int
 	limit int
+}
+
+func (block *block) writeTo(writer io.Writer) (int, error) {
+	return writer.Write(block.buf[:block.pos])
 }

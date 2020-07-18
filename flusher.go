@@ -13,6 +13,8 @@
 
 package sstore
 
+import "os"
+
 type flusher struct {
 	items chan func()
 }
@@ -28,6 +30,20 @@ func (flusher *flusher) append(table *mStreamTable, cb func(err error)) {
 }
 
 func (flusher *flusher) flushMStreamTable(table *mStreamTable) error {
+	var filename string = _files.getNextSegment()
+	segment := createSegment(filename + ".tmp")
+	if err := segment.flushMStreamTable(table); err != nil {
+		return err
+	}
+	if err := segment.close(); err != nil {
+		return err
+	}
+	if err := os.Rename(filename+".tmp", filename); err != nil {
+		return err
+	}
+	if err := _files.appendSegment(filename); err != nil {
+		return err
+	}
 	return nil
 }
 

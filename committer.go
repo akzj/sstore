@@ -16,6 +16,7 @@ package sstore
 import (
 	"log"
 	"sync"
+	"time"
 )
 
 type committer struct {
@@ -55,6 +56,7 @@ type mStreamTable struct {
 	mSize       int64
 	lastEntryID int64
 	sizeMap     *sizeMap
+	GcTS        time.Time
 	mStreams    map[string]*mStream
 }
 
