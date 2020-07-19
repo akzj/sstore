@@ -57,8 +57,8 @@ func createSegment(filename string) *segment {
 	}
 }
 
-func openSegment(filename string) *segment {
-	return nil
+func openSegment(filename string) (*segment,error) {
+	return nil,nil
 }
 
 func (s *segment) indexInfo(name string) (indexInfo, error) {

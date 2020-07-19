@@ -26,11 +26,13 @@ type committer struct {
 	mutableMStreamMap   *mStreamTable
 	sizeMap             *sizeMap
 
-	immutableMStreamMaps []*mStreamTable
-
-	locker sync.Mutex
+	immutableMStreamMaps       []*mStreamTable
+	maxImmutableMStreamMapSize int
+	locker                     sync.RWMutex
 
 	flusher *flusher
+
+	segments map[string]*segment
 }
 
 type sizeMap struct {
@@ -92,26 +94,43 @@ func (m *mStreamTable) appendEntry(e *entry) {
 	m.lastEntryID = e.ID
 }
 
-func (c *committer) flushCallback(table *mStreamTable) {
+func (c *committer) flushCallback(filename string, table *mStreamTable) {
+	segment, err := openSegment(filename)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 	c.locker.Lock()
+	defer c.locker.Unlock()
 	if c.immutableMStreamMaps[0] != table {
 		panic("flushCallback error")
 	}
-	c.immutableMStreamMaps = c.immutableMStreamMaps[1:]
-	c.locker.Unlock()
+	if len(c.immutableMStreamMaps) > c.maxImmutableMStreamMapSize {
+		c.immutableMStreamMaps[0] = nil
+		c.immutableMStreamMaps = c.immutableMStreamMaps[1:]
+	}
+	c.segments[filename] = segment
+}
+
+func (c *committer) getAllMStreamTable() []*mStreamTable {
+	c.locker.RLock()
+	var tables = make([]*mStreamTable, len(c.immutableMStreamMaps)+1)
+	tables = append(tables, c.mutableMStreamMap)
+	tables = append(tables, c.immutableMStreamMaps...)
+	c.locker.RUnlock()
+	return tables
 }
 
 func (c *committer) flush() {
-	toFlush := c.mutableMStreamMap
+	mStreamMap := c.mutableMStreamMap
 	c.locker.Lock()
 	c.immutableMStreamMaps = append(c.immutableMStreamMaps, c.mutableMStreamMap)
 	c.mutableMStreamMap = newMStreamTable(c.sizeMap, len(c.mutableMStreamMap.mStreams))
 	c.locker.Unlock()
-	c.flusher.append(toFlush, func(err error) {
+	c.flusher.append(mStreamMap, func(segmentFile string, err error) {
 		if err != nil {
 			log.Fatal(err.Error())
 		}
-		c.flushCallback(toFlush)
+		c.flushCallback(segmentFile, mStreamMap)
 	})
 }
 

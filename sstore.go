@@ -24,10 +24,12 @@ type SStore struct {
 	entryQueueSize uint32
 	entryQueues    []entryQueue
 
-	segments map[string]segment
+	segments map[string]*segment
 
 	entryID    int64
 	notifyPool sync.Pool
+
+	committer *committer
 }
 
 func (sstore *SStore) nextEntryID() int64 {
