@@ -15,6 +15,7 @@ package sstore
 
 import (
 	"io"
+	"math"
 	"sync"
 )
 
@@ -22,26 +23,74 @@ import (
 type mStream struct {
 	locker sync.RWMutex
 	name   string
-	base   int64
+	begin  int64
+	end    int64
 	size   int64
 	blocks []block
 }
 
+const mStreamEnd = math.MaxInt64
+
 func newMStream(begin int64, name string) *mStream {
+	blocks := make([]block, 0, 128)
+	blocks = append(blocks, makeBlock(begin))
 	return &mStream{
 		name:   name,
-		base:   begin,
+		begin:  begin,
 		size:   0,
-		blocks: nil,
+		blocks: blocks,
+		end:    mStreamEnd,
 	}
 }
 
 func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
-	panic("implement me")
+	m.locker.RLock()
+	defer m.locker.RUnlock()
+	if off < m.begin || off >= m.end {
+		return 0, errOffSet
+	}
+	if len(m.blocks) == 0 {
+		return 0, io.EOF
+	}
+	offset := off - m.begin
+	index := offset / blockSize
+	offset = offset % blockSize
+	if index >= int64(len(m.blocks)) {
+		return 0, errOffSet
+	}
+
+	buf := p
+	var ret int
+	for len(buf) > 0 {
+		block := &m.blocks[index]
+		n := copy(buf, block.buf[:block.limit])
+		ret += n
+		buf = buf[n:]
+		index++
+		if index >= int64(len(m.blocks)) {
+			break
+		}
+	}
+	if ret == 0 {
+		return 0, io.EOF
+	}
+	return ret, nil
 }
 
-func (m *mStream) Write(p []byte) int64 {
-	return m.base + m.size
+func (m *mStream) write(p []byte) int64 {
+	m.locker.Lock()
+	defer m.locker.Unlock()
+	for len(p) > 0 {
+		if m.blocks[len(m.blocks)-1].limit == blockSize {
+			m.blocks = append(m.blocks, makeBlock(m.begin+m.size))
+		}
+		block := &m.blocks[len(m.blocks)-1]
+		n := copy(block.buf[block.limit:], p)
+		block.limit += n
+		m.size += int64(n)
+		p = p[n:]
+	}
+	return m.begin + m.size
 }
 
 func (m *mStream) writeTo(writer io.Writer) (int, error) {
@@ -55,18 +104,31 @@ func (m *mStream) writeTo(writer io.Writer) (int, error) {
 			return n, err
 		}
 	}
-	return n,nil
+	return n, nil
+}
+
+func (m *mStream) close() {
+	m.locker.Lock()
+	defer m.locker.Unlock()
+	m.end = m.begin + m.size
 }
 
 const blockSize = 4 * 1024
 
 type block struct {
+	limit int
 	begin int64
 	buf   []byte
-	pos   int
-	limit int
+}
+
+func makeBlock(begin int64) block {
+	return block{
+		limit: 0,
+		begin: begin,
+		buf:   make([]byte, blockSize),
+	}
 }
 
 func (block *block) writeTo(writer io.Writer) (int, error) {
-	return writer.Write(block.buf[:block.pos])
+	return writer.Write(block.buf[:block.limit])
 }

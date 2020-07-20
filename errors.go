@@ -23,4 +23,5 @@ var (
 	errOffSet            = errors.New("offset error")
 	errNoFindIndexInfo   = errors.New("no find index info")
 	errNoFindOffsetIndex = errors.New("no find offset index")
+	errNoFindSegment     = errors.New("no find segment")
 )

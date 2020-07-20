@@ -17,19 +17,22 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"hash/crc32"
 	"io"
+	"log"
+	"math"
 	"os"
 	"sync"
 	"time"
 )
 
 type indexInfo struct {
-	Name   string
-	Base   int64
-	Offset int64
-	Size   int64
-	CRC    uint32
+	Name   string `json:"name"`
+	Begin  int64  `json:"begin"`
+	Offset int64  `json:"offset"`
+	End    int64  `json:"end"`
+	CRC    uint32 `json:"crc"`
 }
 
 type segmentHeader struct {
@@ -39,26 +42,41 @@ type segmentHeader struct {
 }
 
 type segment struct {
+	*ref
 	filename string
 	header   *segmentHeader
 	f        *os.File
 	l        sync.RWMutex
 }
 
-func createSegment(filename string) *segment {
+func createSegment(filename string) (*segment, error) {
 	f, err := os.Create(filename)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	return &segment{
 		filename: filename,
 		header:   new(segmentHeader),
 		f:        f,
-	}
+	}, nil
 }
 
-func openSegment(filename string) (*segment,error) {
-	return nil,nil
+func openSegment(filename string) (*segment, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	segment := &segment{
+		filename: filename,
+		header:   new(segmentHeader),
+		f:        f,
+	}
+	segment.ref = newRef(0, func() {
+		if err := segment.close(); err != nil {
+			log.Fatal(err.Error())
+		}
+	})
+	return segment, nil
 }
 
 func (s *segment) indexInfo(name string) (indexInfo, error) {
@@ -69,12 +87,15 @@ func (s *segment) indexInfo(name string) (indexInfo, error) {
 	return indexInfo, nil
 }
 
-func (s *segment) Reader(name string) *io.SectionReader {
+func (s *segment) Reader(name string) *segmentReader {
 	info, ok := s.header.Indexes[name]
 	if ok {
 		return nil
 	}
-	return io.NewSectionReader(s.f, info.Base, info.Size)
+	return &segmentReader{
+		indexInfo: info,
+		r:         io.NewSectionReader(s.f, info.Offset, info.End),
+	}
 }
 
 func (s *segment) flushMStreamTable(table *mStreamTable) error {
@@ -92,9 +113,9 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 		index := indexInfo{
 			Name:   name,
 			Offset: Offset,
-			Size:   int64(n),
+			End:    int64(n),
 			CRC:    hash.Sum32(),
-			Base:   mStream.base,
+			Begin:  mStream.begin,
 		}
 		Offset += int64(n)
 		s.header.Indexes[name] = index
@@ -125,4 +146,71 @@ func (s *segment) close() error {
 	}
 	s.f = nil
 	return nil
+}
+
+type segmentReader struct {
+	indexInfo indexInfo
+	r         *io.SectionReader
+}
+
+func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
+	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
+		return 0, errOffSet
+	}
+	offset = offset - s.indexInfo.Begin
+	return s.r.Seek(offset, whence)
+}
+
+func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
+	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
+		return 0, errOffSet
+	}
+	offset = offset - s.indexInfo.Begin
+	return s.r.ReadAt(p, offset)
+}
+
+func (s *segmentReader) Read(p []byte) (n int, err error) {
+	return s.r.Read(p)
+}
+
+type ref struct {
+	l sync.RWMutex
+	c int32
+	f func()
+}
+
+func newRef(count int32, f func()) *ref {
+	return &ref{
+		c: count,
+		f: f,
+	}
+}
+
+func (ref *ref) refCount() int32 {
+	ref.l.Lock()
+	c := ref.c
+	ref.l.Unlock()
+	return c
+}
+
+func (ref *ref) refDec() int32 {
+	ref.l.Lock()
+	if ref.c <= 0 {
+		panic(fmt.Errorf("ref.c %d error", ref.c))
+	}
+	ref.c -= 1
+	if ref.c == 0 {
+		ref.c = math.MinInt32
+		ref.l.Unlock()
+		go ref.f()
+		return 0
+	}
+	return ref.c
+}
+
+func (ref *ref) refInc() int32 {
+	ref.l.Lock()
+	defer ref.l.Unlock()
+	ref.c += 1
+	return ref.c
 }

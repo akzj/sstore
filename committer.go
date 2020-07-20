@@ -32,7 +32,10 @@ type committer struct {
 
 	flusher *flusher
 
-	segments map[string]*segment
+	segments       map[string]*segment
+	segmentsLocker sync.RWMutex
+
+	indexTable *indexTable
 }
 
 type sizeMap struct {
@@ -60,6 +63,7 @@ type mStreamTable struct {
 	sizeMap     *sizeMap
 	GcTS        time.Time
 	mStreams    map[string]*mStream
+	indexTable  *indexTable
 }
 
 func newMStreamTable(sizeMap *sizeMap, mStreamMapSize int) *mStreamTable {
@@ -72,26 +76,52 @@ func newMStreamTable(sizeMap *sizeMap, mStreamMapSize int) *mStreamTable {
 	}
 }
 
-func (m *mStreamTable) getMStream(name string) *mStream {
+func (m *mStreamTable) loadOrCreateMStream(name string) (*mStream, bool) {
 	m.locker.Lock()
 	ms, ok := m.mStreams[name]
 	if ok {
 		m.locker.Unlock()
-		return ms
+		return ms, true
 	}
 	size, _ := m.sizeMap.get(name)
 	ms = newMStream(size, name)
 	m.mStreams[name] = ms
 	m.locker.Unlock()
-	return ms
+	return ms, false
 }
 
-func (m *mStreamTable) appendEntry(e *entry) {
-	ms := m.getMStream(e.name)
-	n := ms.Write(e.data)
+//appendEntry append entry mstream,and return the mStream if it created
+func (m *mStreamTable) appendEntry(e *entry) *mStream {
+	ms, load := m.loadOrCreateMStream(e.name)
+	n := ms.write(e.data)
 	m.sizeMap.set(e.name, n)
 	m.mSize += int64(len(e.data))
 	m.lastEntryID = e.ID
+	if load {
+		return nil
+	}
+	return ms
+}
+
+func (c *committer) appendSegment(filename string, segment *segment) {
+	c.segmentsLocker.Lock()
+	defer c.segmentsLocker.Unlock()
+	segment.refInc()
+	c.segments[filename] = segment
+	c.indexTable.update1(segment)
+}
+
+func (c *committer) deleteSegment(filename string) error {
+	c.segmentsLocker.Lock()
+	defer c.segmentsLocker.Unlock()
+	segment, ok := c.segments[filename]
+	if ok == false {
+		return errNoFindSegment
+	}
+	delete(c.segments, filename)
+	c.indexTable.remove1(segment)
+	segment.refDec()
+	return nil
 }
 
 func (c *committer) flushCallback(filename string, table *mStreamTable) {
@@ -100,7 +130,6 @@ func (c *committer) flushCallback(filename string, table *mStreamTable) {
 		log.Fatal(err.Error())
 	}
 	c.locker.Lock()
-	defer c.locker.Unlock()
 	if c.immutableMStreamMaps[0] != table {
 		panic("flushCallback error")
 	}
@@ -108,7 +137,13 @@ func (c *committer) flushCallback(filename string, table *mStreamTable) {
 		c.immutableMStreamMaps[0] = nil
 		c.immutableMStreamMaps = c.immutableMStreamMaps[1:]
 	}
-	c.segments[filename] = segment
+	c.locker.Unlock()
+
+	c.appendSegment(filename, segment)
+	//update indexTable
+	for _, mStream := range table.mStreams {
+		c.indexTable.remove(mStream)
+	}
 }
 
 func (c *committer) getAllMStreamTable() []*mStreamTable {
@@ -139,7 +174,12 @@ func (c *committer) start() {
 		for {
 			entries := c.queue.take()
 			for i := range entries {
-				c.mutableMStreamMap.appendEntry(entries[i])
+				mStream := c.mutableMStreamMap.appendEntry(entries[i])
+				if mStream != nil {
+					c.indexTable.commit(func() {
+						c.indexTable.update(mStream)
+					})
+				}
 				if c.mutableMStreamMap.mSize >= c.maxMStreamTableSize {
 					c.flush()
 				}

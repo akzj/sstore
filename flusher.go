@@ -23,15 +23,18 @@ func newFlusher() {
 
 }
 
-func (flusher *flusher) append(table *mStreamTable, cb func(segment string,err error)) {
+func (flusher *flusher) append(table *mStreamTable, cb func(segment string, err error)) {
 	flusher.items <- func() {
-		go cb(flusher.flushMStreamTable(table))
+		cb(flusher.flushMStreamTable(table))
 	}
 }
 
 func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
 	var filename = _files.getNextSegment()
-	segment := createSegment(filename + ".tmp")
+	segment, err := createSegment(filename + ".tmp")
+	if err != nil {
+		return "", err
+	}
 	if err := segment.flushMStreamTable(table); err != nil {
 		return "", err
 	}
