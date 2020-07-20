@@ -24,7 +24,7 @@ type committer struct {
 
 	maxMStreamTableSize int64
 	mutableMStreamMap   *mStreamTable
-	sizeMap             *sizeMap
+	sizeMap             *int64LockMap
 
 	immutableMStreamMaps       []*mStreamTable
 	maxImmutableMStreamMapSize int
@@ -35,21 +35,22 @@ type committer struct {
 	segments       map[string]*segment
 	segmentsLocker sync.RWMutex
 
-	indexTable *indexTable
+	indexTable  *indexTable
+	endWatchers *endWatchers
 }
 
-type sizeMap struct {
+type int64LockMap struct {
 	locker *sync.RWMutex
 	sizes  map[string]int64
 }
 
-func (sizeMap *sizeMap) set(name string, pos int64) {
+func (sizeMap *int64LockMap) set(name string, pos int64) {
 	sizeMap.locker.Lock()
 	sizeMap.sizes[name] = pos
 	sizeMap.locker.Unlock()
 }
 
-func (sizeMap *sizeMap) get(name string) (int64, bool) {
+func (sizeMap *int64LockMap) get(name string) (int64, bool) {
 	sizeMap.locker.RLock()
 	size, ok := sizeMap.sizes[name]
 	sizeMap.locker.RUnlock()
@@ -60,17 +61,17 @@ type mStreamTable struct {
 	locker      sync.Mutex
 	mSize       int64
 	lastEntryID int64
-	sizeMap     *sizeMap
+	endMap      *int64LockMap
 	GcTS        time.Time
 	mStreams    map[string]*mStream
 	indexTable  *indexTable
 }
 
-func newMStreamTable(sizeMap *sizeMap, mStreamMapSize int) *mStreamTable {
+func newMStreamTable(sizeMap *int64LockMap, mStreamMapSize int) *mStreamTable {
 	return &mStreamTable{
 		mSize:       0,
 		lastEntryID: 0,
-		sizeMap:     sizeMap,
+		endMap:      sizeMap,
 		locker:      sync.Mutex{},
 		mStreams:    make(map[string]*mStream, mStreamMapSize),
 	}
@@ -83,24 +84,24 @@ func (m *mStreamTable) loadOrCreateMStream(name string) (*mStream, bool) {
 		m.locker.Unlock()
 		return ms, true
 	}
-	size, _ := m.sizeMap.get(name)
+	size, _ := m.endMap.get(name)
 	ms = newMStream(size, name)
 	m.mStreams[name] = ms
 	m.locker.Unlock()
 	return ms, false
 }
 
-//appendEntry append entry mstream,and return the mStream if it created
-func (m *mStreamTable) appendEntry(e *entry) *mStream {
+//appendEntry append entry mStream,and return the mStream if it created
+func (m *mStreamTable) appendEntry(e *entry) (*mStream, int64) {
 	ms, load := m.loadOrCreateMStream(e.name)
-	n := ms.write(e.data)
-	m.sizeMap.set(e.name, n)
+	end := ms.write(e.data)
+	m.endMap.set(e.name, end)
 	m.mSize += int64(len(e.data))
 	m.lastEntryID = e.ID
 	if load {
-		return nil
+		return nil, end
 	}
-	return ms
+	return ms, end
 }
 
 func (c *committer) appendSegment(filename string, segment *segment) {
@@ -169,17 +170,31 @@ func (c *committer) flush() {
 	})
 }
 
+func (c *committer) getMutableMStreamTable() *mStreamTable {
+	c.locker.RLock()
+	defer c.locker.RUnlock()
+	return c.mutableMStreamMap
+}
+
 func (c *committer) start() {
 	go func() {
 		for {
 			entries := c.queue.take()
+			mStreamTable := c.getMutableMStreamTable()
 			for i := range entries {
-				mStream := c.mutableMStreamMap.appendEntry(entries[i])
+				entry := entries[i]
+				mStream, end := mStreamTable.appendEntry(entry)
 				if mStream != nil {
 					c.indexTable.commit(func() {
 						c.indexTable.update(mStream)
 					})
 				}
+
+				item := notifyItemPool.Get().(*notifyItem)
+				item.name = entry.name
+				item.end = end
+				c.endWatchers.notify(item)
+
 				if c.mutableMStreamMap.mSize >= c.maxMStreamTableSize {
 					c.flush()
 				}

@@ -20,11 +20,11 @@ type offsetIndex struct {
 
 var offsetIndexNoFind = offsetItem{}
 
-func newOffsetIndex(name string) *offsetIndex {
+func newOffsetIndex(name string, item offsetItem) *offsetIndex {
 	return &offsetIndex{
 		name:  name,
-		items: nil,
 		l:     sync.RWMutex{},
+		items: append(make([]offsetItem, 0, 128), item),
 	}
 }
 
@@ -75,6 +75,14 @@ func (index *offsetIndex) update(item offsetItem) {
 	} else {
 		panic("index update error")
 	}
+}
+func (index *offsetIndex) begin() (int64, bool) {
+	index.l.RLock()
+	defer index.l.RUnlock()
+	if len(index.items) == 0 {
+		return 0, false
+	}
+	return index.items[0].begin, true
 }
 
 func (index *offsetIndex) remove(item offsetItem) {
@@ -133,15 +141,14 @@ func (index *indexTable) commit(f func()) {
 	index.commitAction <- f
 }
 
-func (index *indexTable) loadOrCreate(name string) *offsetIndex {
+func (index *indexTable) removeEmptyOffsetIndex(name string) {
 	index.l.Lock()
 	defer index.l.Unlock()
 	if offsetIndex, ok := index.indexMap[name]; ok {
-		return offsetIndex
+		if _, ok := offsetIndex.begin(); ok == false {
+			delete(index.indexMap, name)
+		}
 	}
-	offsetIndex := newOffsetIndex(name)
-	index.indexMap[name] = offsetIndex
-	return offsetIndex
 }
 
 func (index *indexTable) get(name string) *offsetIndex {
@@ -153,15 +160,30 @@ func (index *indexTable) get(name string) *offsetIndex {
 	return nil
 }
 
+func (index *indexTable) loadOrCreate(name string, item offsetItem) (*offsetIndex, bool) {
+	index.l.Lock()
+	defer index.l.Unlock()
+	if offsetIndex, ok := index.indexMap[name]; ok {
+		return offsetIndex, true
+	}
+	offsetIndex := newOffsetIndex(name, item)
+	index.indexMap[name] = offsetIndex
+	return offsetIndex, false
+}
+
 func (index *indexTable) update1(segment *segment) {
 	for _, it := range segment.header.Indexes {
 		segment.refInc()
-		index.loadOrCreate(it.Name).update(offsetItem{
+		item := offsetItem{
 			segment: segment,
 			mStream: nil,
 			begin:   it.Begin,
 			end:     it.Begin + it.End,
-		})
+		}
+		offsetIndex, load := index.loadOrCreate(it.Name, item)
+		if load {
+			offsetIndex.update(item)
+		}
 	}
 }
 
@@ -175,6 +197,9 @@ func (index *indexTable) remove1(segment *segment) {
 				end:     it.Begin + it.End,
 			})
 			segment.refDec()
+			if _, ok := offsetIndex.begin(); ok == false {
+				index.removeEmptyOffsetIndex(it.Name)
+			}
 		} else {
 			panic("no find offsetIndex")
 		}
@@ -182,12 +207,16 @@ func (index *indexTable) remove1(segment *segment) {
 }
 
 func (index *indexTable) update(stream *mStream) {
-	index.loadOrCreate(stream.name).update(offsetItem{
+	item := offsetItem{
 		segment: nil,
 		mStream: stream,
 		begin:   stream.begin,
 		end:     stream.end,
-	})
+	}
+	offsetIndex, loaded := index.loadOrCreate(stream.name, item)
+	if loaded {
+		offsetIndex.update(item)
+	}
 }
 
 func (index *indexTable) remove(stream *mStream) {
@@ -198,6 +227,9 @@ func (index *indexTable) remove(stream *mStream) {
 			begin:   stream.begin,
 			end:     stream.end,
 		})
+		if _, ok := offsetIndex.begin(); ok == false {
+			index.removeEmptyOffsetIndex(stream.name)
+		}
 	} else {
 		panic("no find offsetIndex")
 	}

@@ -14,7 +14,6 @@
 package sstore
 
 import (
-	"hash/crc32"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -22,22 +21,20 @@ import (
 
 type SStore struct {
 	entryQueueSize uint32
-	entryQueues    []entryQueue
+	entryQueue     *entryQueue
 
 	segments map[string]*segment
 
 	entryID    int64
 	notifyPool sync.Pool
 
-	committer *committer
+	committer   *committer
+	indexTable  *indexTable
+	endWatchers *endWatchers
 }
 
 func (sstore *SStore) nextEntryID() int64 {
 	return atomic.AddInt64(&sstore.entryID, 1)
-}
-
-func (sstore *SStore) getEntryQueue(name string) *entryQueue {
-	return &sstore.entryQueues[crc32.ChecksumIEEE([]byte(name))/sstore.entryQueueSize]
 }
 
 //Append append the data to end of the stream
@@ -55,7 +52,7 @@ func (sstore *SStore) Append(name string, data []byte) error {
 
 //AsyncAppend async append the data to end of the stream
 func (sstore *SStore) AsyncAppend(name string, data []byte, cb func(err error)) {
-	sstore.getEntryQueue(name).put(&entry{
+	sstore.entryQueue.put(&entry{
 		ID:   sstore.nextEntryID(),
 		name: name,
 		data: data,
@@ -64,29 +61,35 @@ func (sstore *SStore) AsyncAppend(name string, data []byte, cb func(err error)) 
 }
 
 //ReadSeeker create ReadSeeker of the stream
-func (sstore *SStore) ReadSeeker(name string, pos int) io.ReadSeeker {
-	return nil
+func (sstore *SStore) ReadSeeker(name string) io.ReadSeeker {
+	return sstore.indexTable.reader(name)
 }
 
 //Watcher create watcher of the stream
 func (sstore *SStore) Watcher(name string) Watcher {
-	return nil
+	return sstore.endWatchers.newEndWatcher(name)
 }
 
 //size return the end of stream.
-//return -1 when the stream no exist
-func (sstore *SStore) End(name string) int64 {
-	return -1
+//return _,false when the stream no exist
+func (sstore *SStore) End(name string) (int64, bool) {
+	mStreamTable := sstore.committer.getMutableMStreamTable()
+	return mStreamTable.endMap.get(name)
 }
 
 //base return the begin of stream.
-//return -1 when the stream no exist
-func (sstore *SStore) Begin(name string) int64 {
-	return -1
+//return 0,false when the stream no exist
+func (sstore *SStore) Begin(name string) (int64, bool) {
+	offsetIndex := sstore.indexTable.get(name)
+	if offsetIndex == nil {
+		return 0, false
+	}
+	return offsetIndex.begin()
 }
 
 //Exist
 //return true if the stream exist otherwise return false
-func (sstore *SStore) Exist() bool {
-	return false
+func (sstore *SStore) Exist(name string) bool {
+	_, ok := sstore.Begin(name)
+	return ok
 }

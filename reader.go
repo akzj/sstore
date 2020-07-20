@@ -29,6 +29,24 @@ func newReader(name string, offset int64, index *offsetIndex) *reader {
 	}
 }
 
+func (r *reader) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	default:
+		return 0, errWhence
+	case io.SeekStart:
+	case io.SeekCurrent:
+		offset += r.offset
+	case io.SeekEnd:
+		return 0, errNoSupportSeekEnd
+	}
+	begin, ok := r.index.begin()
+	if ok && offset < begin {
+		return 0, errOffSet
+	}
+	r.offset = offset
+	return offset, nil
+}
+
 func (r *reader) Read(p []byte) (n int, err error) {
 	buf := p
 	var ret int

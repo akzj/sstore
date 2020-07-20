@@ -14,8 +14,11 @@
 package sstore
 
 import (
+	"bufio"
 	"bytes"
+	"io"
 	"os"
+	"sync"
 )
 
 const version = "1.0.0"
@@ -29,19 +32,21 @@ type walHeader struct {
 
 // write ahead log
 type wal struct {
-	size   int64
-	f      *os.File
-	bCap   int
-	buffer *bytes.Buffer
-	header walHeader
+	filename string
+	l        sync.RWMutex
+	size     int64
+	f        *os.File
+	bCap     int
+	buffer   *bytes.Buffer
+	header   walHeader
 }
 
-func openWal(filename string) *wal {
-	return &wal{}
+func openWal(filename string) (*wal, error) {
+	return &wal{}, nil
 }
 
-func createWal(filename string) *wal {
-	return &wal{}
+func createWal(filename string) (*wal, error) {
+	return &wal{}, nil
 }
 
 func (wal *wal) getHeader() walHeader {
@@ -49,6 +54,8 @@ func (wal *wal) getHeader() walHeader {
 }
 
 func (wal *wal) flush() error {
+	wal.l.Lock()
+	defer wal.l.Unlock()
 	if wal.buffer.Len() > 0 {
 		if n, err := wal.f.Write(wal.buffer.Bytes()); err != nil {
 			return err
@@ -65,6 +72,8 @@ func (wal *wal) sync() error {
 }
 
 func (wal *wal) write(e *entry) error {
+	wal.l.Lock()
+	defer wal.l.Unlock()
 	wal.header.LastEntryID = e.ID
 	if wal.header.FirstEntryID == -1 {
 		wal.header.FirstEntryID = e.ID
@@ -86,4 +95,36 @@ func (wal *wal) write(e *entry) error {
 	}
 	wal.size += int64(e.size())
 	return nil
+}
+
+func (wal *wal) fileSize() int64 {
+	wal.l.RLock()
+	defer wal.l.RUnlock()
+	return wal.size
+}
+
+func (wal *wal) close() error {
+	wal.l.Lock()
+	defer wal.l.Unlock()
+	return wal.f.Close()
+}
+
+func (wal *wal) Filename() string {
+	return wal.filename
+}
+
+func (wal *wal) read(cb func(e *entry)) error {
+	wal.l.RLock()
+	defer wal.l.RUnlock()
+	reader := bufio.NewReader(wal.f)
+	for {
+		e, err := decodeEntry(reader)
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		cb(e)
+	}
 }

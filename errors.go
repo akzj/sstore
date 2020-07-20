@@ -18,10 +18,10 @@ import (
 )
 
 var (
-	ErrEntryLengthOfName = errors.New("entry name length of name error")
-	ErrEntryLengthOfData = errors.New("entry data length of data error")
 	errOffSet            = errors.New("offset error")
 	errNoFindIndexInfo   = errors.New("no find index info")
 	errNoFindOffsetIndex = errors.New("no find offset index")
 	errNoFindSegment     = errors.New("no find segment")
+	errWhence            = errors.New("whence error")
+	errNoSupportSeekEnd  = errors.New("no support SeekEnd")
 )

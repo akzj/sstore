@@ -19,8 +19,10 @@ type flusher struct {
 	items chan func()
 }
 
-func newFlusher() {
-
+func newFlusher() *flusher {
+	return &flusher{
+		items: make(chan func(), 1),
+	}
 }
 
 func (flusher *flusher) append(table *mStreamTable, cb func(segment string, err error)) {
