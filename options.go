@@ -26,7 +26,7 @@ type Options struct {
 	MaxSegmentCount               int64  `json:"max_segment_count"`
 	BlockSize                     int64  `json:"block_size"`
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
-	MaxImmutableMStreamTableCount int64  `json:"max_immutable_mStream_table_count"`
+	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
 	EntryQueueCap                 int    `json:"entry_queue_cap"`
 }
 

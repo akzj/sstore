@@ -23,24 +23,45 @@ type SStore struct {
 	options    Options
 	entryQueue *entryQueue
 
-	entryID    int64
-	notifyPool sync.Pool
-
+	entryID     int64
+	notifyPool  sync.Pool
+	segments    map[string]*segment
+	endMap      *int64LockMap
 	committer   *committer
 	indexTable  *indexTable
 	endWatchers *endWatchers
+	wWriter     *wWriter
+	files       *files
 }
 
-func OpenSStore(options Options) *SStore {
-	return &SStore{
-		options:     options,
-		entryQueue:  newEntryQueue(options.EntryQueueCap),
-		entryID:     0,
+func Open(options Options) (*SStore, error) {
+	var sstore = &SStore{
+		options:    options,
+		entryQueue: newEntryQueue(options.EntryQueueCap),
+		entryID:    0,
+		notifyPool: sync.Pool{
+			New: func() interface{} {
+				return make(chan interface{}, 1)
+			},
+		},
+		segments:    make(map[string]*segment),
+		endMap:      newInt64LockMap(),
 		committer:   nil,
-		indexTable:  nil,
-		endWatchers: nil,
-		notifyPool:  sync.Pool{},
+		indexTable:  newIndexTable(),
+		endWatchers: newEndWatchers(),
 	}
+	mStreamTable := newMStreamTable(sstore.endMap, 128)
+	commitQueue := newEntryQueue(options.EntryQueueCap)
+	committer := newCommitter(options, sstore.endWatchers,
+		sstore.indexTable, sstore.segments,
+		sstore.endMap, mStreamTable, commitQueue)
+	sstore.committer = committer
+
+	sstore.wWriter = newWWriter(nil, sstore.entryQueue, commitQueue)
+	if err := recover(sstore); err != nil {
+		return nil, err
+	}
+	return sstore, nil
 }
 
 func (sstore *SStore) Options() Options {

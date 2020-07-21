@@ -21,6 +21,14 @@ type wWriter struct {
 	commit *entryQueue
 }
 
+func newWWriter(w *wal, queue *entryQueue, commitQueue *entryQueue) *wWriter {
+	return &wWriter{
+		wal:    w,
+		queue:  queue,
+		commit: commitQueue,
+	}
+}
+
 //append the entry to the queue of writer
 func (worker *wWriter) append(e *entry) {
 	worker.queue.put(e)

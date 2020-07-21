@@ -26,82 +26,40 @@ type committer struct {
 	mutableMStreamMap   *mStreamTable
 	sizeMap             *int64LockMap
 
-	immutableMStreamMaps       []*mStreamTable
-	maxImmutableMStreamMapSize int
-	locker                     sync.RWMutex
+	immutableMStreamMaps          []*mStreamTable
+	maxImmutableMStreamTableCount int
+	locker                        *sync.RWMutex
 
 	flusher *flusher
 
 	segments       map[string]*segment
-	segmentsLocker sync.RWMutex
+	segmentsLocker *sync.RWMutex
 
 	indexTable  *indexTable
 	endWatchers *endWatchers
 }
 
-type int64LockMap struct {
-	locker *sync.RWMutex
-	sizes  map[string]int64
-}
-
-func (sizeMap *int64LockMap) set(name string, pos int64) {
-	sizeMap.locker.Lock()
-	sizeMap.sizes[name] = pos
-	sizeMap.locker.Unlock()
-}
-
-func (sizeMap *int64LockMap) get(name string) (int64, bool) {
-	sizeMap.locker.RLock()
-	size, ok := sizeMap.sizes[name]
-	sizeMap.locker.RUnlock()
-	return size, ok
-}
-
-type mStreamTable struct {
-	locker      sync.Mutex
-	mSize       int64
-	lastEntryID int64
-	endMap      *int64LockMap
-	GcTS        time.Time
-	mStreams    map[string]*mStream
-	indexTable  *indexTable
-}
-
-func newMStreamTable(sizeMap *int64LockMap, mStreamMapSize int) *mStreamTable {
-	return &mStreamTable{
-		mSize:       0,
-		lastEntryID: 0,
-		endMap:      sizeMap,
-		locker:      sync.Mutex{},
-		mStreams:    make(map[string]*mStream, mStreamMapSize),
+func newCommitter(options Options,
+	endWatchers *endWatchers,
+	indexTable *indexTable,
+	segments map[string]*segment,
+	sizeMap *int64LockMap,
+	mutableMStreamMap *mStreamTable,
+	queue *entryQueue) *committer {
+	return &committer{
+		queue:                         queue,
+		maxMStreamTableSize:           options.MaxMStreamTableSize,
+		mutableMStreamMap:             mutableMStreamMap,
+		sizeMap:                       sizeMap,
+		immutableMStreamMaps:          make([]*mStreamTable, 0, 32),
+		locker:                        new(sync.RWMutex),
+		flusher:                       newFlusher(),
+		segments:                      segments,
+		segmentsLocker:                new(sync.RWMutex),
+		indexTable:                    indexTable,
+		endWatchers:                   endWatchers,
+		maxImmutableMStreamTableCount: options.MaxImmutableMStreamTableCount,
 	}
-}
-
-func (m *mStreamTable) loadOrCreateMStream(name string) (*mStream, bool) {
-	m.locker.Lock()
-	ms, ok := m.mStreams[name]
-	if ok {
-		m.locker.Unlock()
-		return ms, true
-	}
-	size, _ := m.endMap.get(name)
-	ms = newMStream(size, name)
-	m.mStreams[name] = ms
-	m.locker.Unlock()
-	return ms, false
-}
-
-//appendEntry append entry mStream,and return the mStream if it created
-func (m *mStreamTable) appendEntry(e *entry) (*mStream, int64) {
-	ms, load := m.loadOrCreateMStream(e.name)
-	end := ms.write(e.data)
-	m.endMap.set(e.name, end)
-	m.mSize += int64(len(e.data))
-	m.lastEntryID = e.ID
-	if load {
-		return nil, end
-	}
-	return ms, end
 }
 
 func (c *committer) appendSegment(filename string, segment *segment) {
@@ -134,7 +92,7 @@ func (c *committer) flushCallback(filename string, table *mStreamTable) {
 	if c.immutableMStreamMaps[0] != table {
 		panic("flushCallback error")
 	}
-	if len(c.immutableMStreamMaps) > c.maxImmutableMStreamMapSize {
+	if len(c.immutableMStreamMaps) > c.maxImmutableMStreamTableCount {
 		c.immutableMStreamMaps[0] = nil
 		c.immutableMStreamMaps = c.immutableMStreamMaps[1:]
 	}
@@ -201,4 +159,76 @@ func (c *committer) start() {
 			}
 		}
 	}()
+}
+
+type mStreamTable struct {
+	locker      sync.Mutex
+	mSize       int64
+	lastEntryID int64
+	endMap      *int64LockMap
+	GcTS        time.Time
+	mStreams    map[string]*mStream
+	indexTable  *indexTable
+}
+
+func newMStreamTable(sizeMap *int64LockMap, mStreamMapSize int) *mStreamTable {
+	return &mStreamTable{
+		mSize:       0,
+		lastEntryID: 0,
+		endMap:      sizeMap,
+		locker:      sync.Mutex{},
+		mStreams:    make(map[string]*mStream, mStreamMapSize),
+	}
+}
+
+func (m *mStreamTable) loadOrCreateMStream(name string) (*mStream, bool) {
+	m.locker.Lock()
+	ms, ok := m.mStreams[name]
+	if ok {
+		m.locker.Unlock()
+		return ms, true
+	}
+	size, _ := m.endMap.get(name)
+	ms = newMStream(size, name)
+	m.mStreams[name] = ms
+	m.locker.Unlock()
+	return ms, false
+}
+
+//appendEntry append entry mStream,and return the mStream if it created
+func (m *mStreamTable) appendEntry(e *entry) (*mStream, int64) {
+	ms, load := m.loadOrCreateMStream(e.name)
+	end := ms.write(e.data)
+	m.endMap.set(e.name, end)
+	m.mSize += int64(len(e.data))
+	m.lastEntryID = e.ID
+	if load {
+		return nil, end
+	}
+	return ms, end
+}
+
+type int64LockMap struct {
+	locker *sync.RWMutex
+	sizes  map[string]int64
+}
+
+func newInt64LockMap() *int64LockMap {
+	return &int64LockMap{
+		locker: new(sync.RWMutex),
+		sizes:  make(map[string]int64, 1024),
+	}
+}
+
+func (sizeMap *int64LockMap) set(name string, pos int64) {
+	sizeMap.locker.Lock()
+	sizeMap.sizes[name] = pos
+	sizeMap.locker.Unlock()
+}
+
+func (sizeMap *int64LockMap) get(name string) (int64, bool) {
+	sizeMap.locker.RLock()
+	size, ok := sizeMap.sizes[name]
+	sizeMap.locker.RUnlock()
+	return size, ok
 }

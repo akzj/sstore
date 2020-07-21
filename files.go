@@ -72,6 +72,20 @@ func openFiles(filesDir string, segmentDir string) *files {
 		notifyS:       make(chan interface{}),
 	}
 }
+func copyStrings(strings []string) []string {
+	return append(make([]string, 0, len(strings)), strings...)
+}
+func (f *files) getSegmentFiles() []string {
+	f.l.RLock()
+	defer f.l.RUnlock()
+	return copyStrings(f.SegmentFiles)
+}
+
+func (f *files) getWalFiles() []string {
+	f.l.RLock()
+	defer f.l.RUnlock()
+	return copyStrings(f.WalFiles)
+}
 
 func (f *files) recovery() error {
 	f.inRecovery = true
@@ -207,20 +221,21 @@ func (f *files) makeSnapshot() {
 	}
 }
 
-func (f *files) appendSegment(request appendSegment) error {
+func (f *files) appendSegment(appendS appendSegment) error {
 	f.l.Lock()
 	defer f.l.Unlock()
-	for _, it := range f.SegmentFiles {
-		if it == request.Filename {
+	filename := filepath.Base(appendS.Filename)
+	for _, file := range f.SegmentFiles {
+		if file == filename {
 			return fmt.Errorf("filename repeated")
 		}
 	}
-	f.SegmentFiles = append(f.SegmentFiles, request.Filename)
+	f.SegmentFiles = append(f.SegmentFiles, filename)
 	if f.inRecovery {
 		return nil
 	}
 	f.EntryID++
-	data, _ := json.Marshal(request)
+	data, _ := json.Marshal(appendS)
 	if err := f.wal.write(&entry{
 		ID:   f.EntryID,
 		name: appendSegmentType,

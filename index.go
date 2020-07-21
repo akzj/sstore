@@ -126,7 +126,7 @@ func newIndexTable() *indexTable {
 	}
 }
 
-func (index *indexTable) startCommitRoutine() {
+func (index *indexTable) start() {
 	go func() {
 		for {
 			select {

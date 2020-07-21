@@ -16,7 +16,7 @@ type notifyItem struct {
 type endWatchers struct {
 	watchIndex     int64
 	endWatcherMap  map[string][]endWatcher
-	endWatcherLock sync.RWMutex
+	endWatcherLock *sync.RWMutex
 
 	l           *sync.Mutex
 	cond        *sync.Cond
@@ -27,6 +27,17 @@ var notifyItemPool = sync.Pool{New: func() interface{} {
 	return new(notifyItem)
 }}
 
+func newEndWatchers() *endWatchers {
+	l := new(sync.Mutex)
+	return &endWatchers{
+		watchIndex:     0,
+		l:              l,
+		cond:           sync.NewCond(l),
+		endWatcherLock: new(sync.RWMutex),
+		notifyItems:    make([]*notifyItem, 1024),
+		endWatcherMap:  make(map[string][]endWatcher),
+	}
+}
 func (endWatchers *endWatchers) removeEndWatcher(index int64, name string) {
 	endWatchers.endWatcherLock.Lock()
 	defer endWatchers.endWatcherLock.Unlock()
