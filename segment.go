@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pkg/errors"
 	"hash/crc32"
 	"io"
 	"log"
@@ -27,7 +28,7 @@ import (
 	"time"
 )
 
-type indexInfo struct {
+type offsetInfo struct {
 	Name   string `json:"name"`
 	Begin  int64  `json:"begin"`
 	Offset int64  `json:"offset"`
@@ -35,18 +36,18 @@ type indexInfo struct {
 	CRC    uint32 `json:"crc"`
 }
 
-type segmentHeader struct {
-	GcTS        time.Time            `json:"gc_ts"`
-	LastEntryID int64                `json:"last_entry_id"`
-	Indexes     map[string]indexInfo `json:"indexes"`
+type segmentMeta struct {
+	GcTS        time.Time             `json:"gc_ts"`
+	LastEntryID int64                 `json:"last_entry_id"`
+	OffSetInfos map[string]offsetInfo `json:"offset_infos"`
 }
 
 type segment struct {
 	*ref
 	filename string
-	header   *segmentHeader
 	f        *os.File
-	l        sync.RWMutex
+	meta     *segmentMeta
+	l        *sync.RWMutex
 }
 
 func createSegment(filename string) (*segment, error) {
@@ -54,11 +55,19 @@ func createSegment(filename string) (*segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &segment{
-		filename: filename,
-		header:   new(segmentHeader),
+	segment := &segment{
 		f:        f,
-	}, nil
+		filename: filename,
+		meta:     new(segmentMeta),
+		l:        new(sync.RWMutex),
+	}
+	segment.ref = newRef(0, func() {
+		if err := segment.close(); err != nil {
+			log.Fatal(err.Error())
+		}
+	})
+	segment.meta.OffSetInfos = make(map[string]offsetInfo)
+	return segment, nil
 }
 
 func openSegment(filename string) (*segment, error) {
@@ -68,8 +77,35 @@ func openSegment(filename string) (*segment, error) {
 	}
 	segment := &segment{
 		filename: filename,
-		header:   new(segmentHeader),
+		meta:     new(segmentMeta),
 		f:        f,
+	}
+	//seek to read meta length
+	if _, err := f.Seek(-4, io.SeekEnd); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	//read meta length
+	var headerLen int32
+	if err := binary.Read(f, binary.BigEndian, &headerLen); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	//seek to read meta
+	if _, err := f.Seek(-int64(headerLen)-4, io.SeekEnd); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	data := make([]byte, headerLen)
+	n, err := f.Read(data)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if n != len(data) {
+		return nil, errors.WithMessage(io.ErrUnexpectedEOF, "read segment head failed")
+	}
+	if err := json.Unmarshal(data, &segment.meta); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, errors.WithStack(err)
 	}
 	segment.ref = newRef(0, func() {
 		if err := segment.close(); err != nil {
@@ -79,8 +115,8 @@ func openSegment(filename string) (*segment, error) {
 	return segment, nil
 }
 
-func (s *segment) indexInfo(name string) (indexInfo, error) {
-	indexInfo, ok := s.header.Indexes[name]
+func (s *segment) offsetInfo(name string) (offsetInfo, error) {
+	indexInfo, ok := s.meta.OffSetInfos[name]
 	if ok == false {
 		return indexInfo, errNoFindIndexInfo
 	}
@@ -88,7 +124,7 @@ func (s *segment) indexInfo(name string) (indexInfo, error) {
 }
 
 func (s *segment) Reader(name string) *segmentReader {
-	info, ok := s.header.Indexes[name]
+	info, ok := s.meta.OffSetInfos[name]
 	if ok {
 		return nil
 	}
@@ -110,7 +146,7 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 		if err != nil {
 			return err
 		}
-		index := indexInfo{
+		index := offsetInfo{
 			Name:   name,
 			Offset: Offset,
 			End:    int64(n),
@@ -118,11 +154,11 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 			Begin:  mStream.begin,
 		}
 		Offset += int64(n)
-		s.header.Indexes[name] = index
+		s.meta.OffSetInfos[name] = index
 	}
-	s.header.LastEntryID = table.lastEntryID
-	s.header.GcTS = table.GcTS
-	data, _ := json.Marshal(s.header)
+	s.meta.LastEntryID = table.lastEntryID
+	s.meta.GcTS = table.GcTS
+	data, _ := json.Marshal(s.meta)
 	if _, err := writer.Write(data); err != nil {
 		return err
 	}
@@ -149,7 +185,7 @@ func (s *segment) close() error {
 }
 
 type segmentReader struct {
-	indexInfo indexInfo
+	indexInfo offsetInfo
 	r         *io.SectionReader
 }
 

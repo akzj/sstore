@@ -1,6 +1,7 @@
 package sstore
 
 import (
+	"github.com/pkg/errors"
 	"sort"
 	"sync"
 )
@@ -172,13 +173,13 @@ func (index *indexTable) loadOrCreate(name string, item offsetItem) (*offsetInde
 }
 
 func (index *indexTable) update1(segment *segment) {
-	for _, it := range segment.header.Indexes {
+	for _, it := range segment.meta.OffSetInfos {
 		segment.refInc()
 		item := offsetItem{
 			segment: segment,
 			mStream: nil,
 			begin:   it.Begin,
-			end:     it.Begin + it.End,
+			end:     it.End,
 		}
 		offsetIndex, load := index.loadOrCreate(it.Name, item)
 		if load {
@@ -187,23 +188,24 @@ func (index *indexTable) update1(segment *segment) {
 	}
 }
 
-func (index *indexTable) remove1(segment *segment) {
-	for _, it := range segment.header.Indexes {
-		if offsetIndex := index.get(it.Name); offsetIndex != nil {
+func (index *indexTable) remove1(segment *segment) error {
+	for _, info := range segment.meta.OffSetInfos {
+		if offsetIndex := index.get(info.Name); offsetIndex != nil {
 			offsetIndex.remove(offsetItem{
 				segment: segment,
 				mStream: nil,
-				begin:   it.Begin,
-				end:     it.Begin + it.End,
+				begin:   info.Begin,
+				end:     info.End,
 			})
 			segment.refDec()
 			if _, ok := offsetIndex.begin(); ok == false {
-				index.removeEmptyOffsetIndex(it.Name)
+				index.removeEmptyOffsetIndex(info.Name)
 			}
 		} else {
-			panic("no find offsetIndex")
+			return errors.Errorf("no find offsetIndex for %s", info.Name)
 		}
 	}
+	return nil
 }
 
 func (index *indexTable) update(stream *mStream) {

@@ -20,24 +20,26 @@ import (
 //recover segment,wal,index
 func recover(sStore *SStore) error {
 
-	fileS := openFiles(sStore.options.FilesDir, sStore.options.SegmentDir)
-	sStore.files = fileS
+	files := openFiles(sStore.options.FilesDir,
+		sStore.options.SegmentDir,
+		sStore.options.WalDir)
+	sStore.files = files
 
-	segmentFiles := fileS.getSegmentFiles()
+	segmentFiles := files.getSegmentFiles()
 	for _, file := range segmentFiles {
 		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		for _, index := range segment.header.Indexes {
-			sStore.endMap.set(index.Name, index.End)
+		for _, info := range segment.meta.OffSetInfos {
+			sStore.endMap.set(info.Name, info.End)
 		}
-		sStore.entryID = segment.header.LastEntryID
+		sStore.entryID = segment.meta.LastEntryID
 		sStore.segments[file] = segment
 		sStore.indexTable.update1(segment)
 	}
 
-	walFiles := fileS.getWalFiles()
+	walFiles := files.getWalFiles()
 	for _, file := range walFiles {
 		wal, err := openWal(filepath.Join(sStore.options.WalDir, file))
 		if err != nil {
@@ -47,14 +49,47 @@ func recover(sStore *SStore) error {
 			if e.ID <= sStore.entryID {
 				return nil
 			} else if e.ID == sStore.entryID+1 {
-				sStore.committer.queue.put(e)
+				end1, _ := sStore.endMap.get(e.name)
+				committer := sStore.committer
+				mStream, end2 := committer.mutableMStreamMap.appendEntry(e)
+				if mStream != nil {
+					committer.indexTable.commit(func() {
+						committer.indexTable.update(mStream)
+					})
+				}
+				if committer.mutableMStreamMap.mSize >= committer.maxMStreamTableSize {
+					committer.flush()
+				}
+				if end2 != end1+int64(len(e.data)) {
+					return errors.Errorf("endMap error %d %d %d", end2, len(e.data), end2)
+				}
 				return nil
 			} else {
 				return errors.WithStack(ErrWal)
 			}
 		}); err != nil {
+			_ = wal.close()
 			return err
 		}
+		if err := wal.close(); err != nil {
+			return errors.WithStack(err)
+		}
 	}
+	var w *wal
+	var err error
+	if len(walFiles) > 0 {
+		last := walFiles[len(walFiles)-1]
+		w, err = openWal(filepath.Join(sStore.options.WalDir, last))
+		if err != nil {
+			return errors.WithStack(err)
+		}
+	} else {
+		file := files.getNextWal()
+		w, err = createWal(file)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+	}
+	sStore.wWriter = newWWriter(w, sStore.entryQueue, sStore.committer.queue)
 	return nil
 }

@@ -37,6 +37,8 @@ type committer struct {
 
 	indexTable  *indexTable
 	endWatchers *endWatchers
+
+	blockSize int64
 }
 
 func newCommitter(options Options,
@@ -45,9 +47,10 @@ func newCommitter(options Options,
 	segments map[string]*segment,
 	sizeMap *int64LockMap,
 	mutableMStreamMap *mStreamTable,
-	queue *entryQueue) *committer {
+	queue *entryQueue, blockSize int64) *committer {
 	return &committer{
 		queue:                         queue,
+		blockSize:                     blockSize,
 		maxMStreamTableSize:           options.MaxMStreamTableSize,
 		mutableMStreamMap:             mutableMStreamMap,
 		sizeMap:                       sizeMap,
@@ -78,7 +81,9 @@ func (c *committer) deleteSegment(filename string) error {
 		return errNoFindSegment
 	}
 	delete(c.segments, filename)
-	c.indexTable.remove1(segment)
+	if err := c.indexTable.remove1(segment); err != nil {
+		return err
+	}
 	segment.refDec()
 	return nil
 }
@@ -88,37 +93,35 @@ func (c *committer) flushCallback(filename string, table *mStreamTable) {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
+	var remove = false
 	c.locker.Lock()
 	if c.immutableMStreamMaps[0] != table {
 		panic("flushCallback error")
 	}
 	if len(c.immutableMStreamMaps) > c.maxImmutableMStreamTableCount {
-		c.immutableMStreamMaps[0] = nil
-		c.immutableMStreamMaps = c.immutableMStreamMaps[1:]
+		copy(c.immutableMStreamMaps[0:], c.immutableMStreamMaps[1:])
+		c.immutableMStreamMaps[len(c.immutableMStreamMaps)-1] = nil
+		c.immutableMStreamMaps = c.immutableMStreamMaps[:len(c.immutableMStreamMaps)-1]
+		remove = true
 	}
 	c.locker.Unlock()
 
 	c.appendSegment(filename, segment)
-	//update indexTable
-	for _, mStream := range table.mStreams {
-		c.indexTable.remove(mStream)
-	}
-}
 
-func (c *committer) getAllMStreamTable() []*mStreamTable {
-	c.locker.RLock()
-	var tables = make([]*mStreamTable, len(c.immutableMStreamMaps)+1)
-	tables = append(tables, c.mutableMStreamMap)
-	tables = append(tables, c.immutableMStreamMaps...)
-	c.locker.RUnlock()
-	return tables
+	if remove {
+		//update indexTable
+		for _, mStream := range table.mStreams {
+			c.indexTable.remove(mStream)
+		}
+	}
 }
 
 func (c *committer) flush() {
 	mStreamMap := c.mutableMStreamMap
+	c.mutableMStreamMap = newMStreamTable(c.sizeMap, c.blockSize,
+		len(c.mutableMStreamMap.mStreams))
 	c.locker.Lock()
-	c.immutableMStreamMaps = append(c.immutableMStreamMaps, c.mutableMStreamMap)
-	c.mutableMStreamMap = newMStreamTable(c.sizeMap, len(c.mutableMStreamMap.mStreams))
+	c.immutableMStreamMaps = append(c.immutableMStreamMaps, mStreamMap)
 	c.locker.Unlock()
 	c.flusher.append(mStreamMap, func(segmentFile string, err error) {
 		if err != nil {
@@ -128,20 +131,13 @@ func (c *committer) flush() {
 	})
 }
 
-func (c *committer) getMutableMStreamTable() *mStreamTable {
-	c.locker.RLock()
-	defer c.locker.RUnlock()
-	return c.mutableMStreamMap
-}
-
 func (c *committer) start() {
 	go func() {
 		for {
 			entries := c.queue.take()
-			mStreamTable := c.getMutableMStreamTable()
 			for i := range entries {
 				entry := entries[i]
-				mStream, end := mStreamTable.appendEntry(entry)
+				mStream, end := c.mutableMStreamMap.appendEntry(entry)
 				if mStream != nil {
 					c.indexTable.commit(func() {
 						c.indexTable.update(mStream)
@@ -169,10 +165,12 @@ type mStreamTable struct {
 	GcTS        time.Time
 	mStreams    map[string]*mStream
 	indexTable  *indexTable
+	blockSize   int64
 }
 
-func newMStreamTable(sizeMap *int64LockMap, mStreamMapSize int) *mStreamTable {
+func newMStreamTable(sizeMap *int64LockMap, blockSize int64, mStreamMapSize int) *mStreamTable {
 	return &mStreamTable{
+		blockSize:   blockSize,
 		mSize:       0,
 		lastEntryID: 0,
 		endMap:      sizeMap,
@@ -189,7 +187,7 @@ func (m *mStreamTable) loadOrCreateMStream(name string) (*mStream, bool) {
 		return ms, true
 	}
 	size, _ := m.endMap.get(name)
-	ms = newMStream(size, name)
+	ms = newMStream(size, m.blockSize, name)
 	m.mStreams[name] = ms
 	m.locker.Unlock()
 	return ms, false

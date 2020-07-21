@@ -34,6 +34,7 @@ const (
 	appendSegmentType = "appendSegment"
 	filesSnapshotType = "filesSnapshot"
 	segmentExt        = ".seg"
+	WalExt            = ".log"
 	filesWalExt       = ".files.log"
 	filesWalExtTmp    = ".files.log.tmp"
 )
@@ -44,6 +45,7 @@ type files struct {
 	l             sync.RWMutex
 	segmentDir    string
 	filesDir      string
+	walDir        string
 	segmentIndex  int64
 	walIndex      int64
 	filesWalIndex int64
@@ -56,12 +58,14 @@ type files struct {
 	notifyS chan interface{}
 }
 
-func openFiles(filesDir string, segmentDir string) *files {
+func openFiles(filesDir string, segmentDir string, walDir string) *files {
 	return &files{
 		maxWalSize:    128 * 1024 * 1024,
+		wal:           nil,
 		l:             sync.RWMutex{},
 		segmentDir:    segmentDir,
 		filesDir:      filesDir,
+		walDir:        walDir,
 		segmentIndex:  0,
 		walIndex:      0,
 		filesWalIndex: 0,
@@ -268,6 +272,13 @@ func (f *files) start() {
 			}
 		}
 	}()
+}
+
+func (f *files) getNextWal() string {
+	f.l.Lock()
+	f.l.Unlock()
+	f.walIndex++
+	return filepath.Join(f.walDir, strconv.FormatInt(f.walIndex, 10)+WalExt)
 }
 
 func parseFilenameIndex(filename string) (int64, error) {

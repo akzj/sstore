@@ -50,17 +50,19 @@ func Open(options Options) (*SStore, error) {
 		indexTable:  newIndexTable(),
 		endWatchers: newEndWatchers(),
 	}
-	mStreamTable := newMStreamTable(sstore.endMap, 128)
+	mStreamTable := newMStreamTable(sstore.endMap, options.BlockSize, 128)
 	commitQueue := newEntryQueue(options.EntryQueueCap)
 	committer := newCommitter(options, sstore.endWatchers,
 		sstore.indexTable, sstore.segments,
-		sstore.endMap, mStreamTable, commitQueue)
+		sstore.endMap, mStreamTable, commitQueue, options.BlockSize)
 	sstore.committer = committer
-
-	sstore.wWriter = newWWriter(nil, sstore.entryQueue, commitQueue)
 	if err := recover(sstore); err != nil {
 		return nil, err
 	}
+
+	committer.start()
+	sstore.wWriter.start()
+	sstore.indexTable.start()
 	return sstore, nil
 }
 
@@ -108,8 +110,7 @@ func (sstore *SStore) Watcher(name string) Watcher {
 //size return the end of stream.
 //return _,false when the stream no exist
 func (sstore *SStore) End(name string) (int64, bool) {
-	mStreamTable := sstore.committer.getMutableMStreamTable()
-	return mStreamTable.endMap.get(name)
+	return sstore.endMap.get(name)
 }
 
 //base return the begin of stream.

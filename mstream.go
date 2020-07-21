@@ -21,25 +21,28 @@ import (
 
 //memory stream
 type mStream struct {
-	locker sync.RWMutex
-	name   string
-	begin  int64
-	end    int64
-	size   int64
-	blocks []block
+	locker    sync.RWMutex
+	name      string
+	begin     int64
+	end       int64
+	size      int64
+	blocks    []block
+	blockSize int64
 }
 
 const mStreamEnd = math.MaxInt64
 
-func newMStream(begin int64, name string) *mStream {
+func newMStream(begin int64, blockSize int64, name string) *mStream {
 	blocks := make([]block, 0, 128)
 	blocks = append(blocks, makeBlock(begin))
 	return &mStream{
-		name:   name,
-		begin:  begin,
-		size:   0,
-		blocks: blocks,
-		end:    mStreamEnd,
+		locker:    sync.RWMutex{},
+		name:      name,
+		begin:     begin,
+		end:       mStreamEnd,
+		size:      0,
+		blocks:    blocks,
+		blockSize: blockSize,
 	}
 }
 
@@ -53,8 +56,8 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, io.EOF
 	}
 	offset := off - m.begin
-	index := offset / blockSize
-	offset = offset % blockSize
+	index := offset / m.blockSize
+	offset = offset % m.blockSize
 	if index >= int64(len(m.blocks)) {
 		return 0, errOffSet
 	}
