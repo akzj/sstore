@@ -19,13 +19,14 @@ type reader struct {
 	offset int64
 	name   string
 	index  *offsetIndex
+	endMap *int64LockMap
 }
 
-func newReader(name string, offset int64, index *offsetIndex) *reader {
+func newReader(name string, index *offsetIndex, endMap *int64LockMap) *reader {
 	return &reader{
 		name:   name,
 		index:  index,
-		offset: offset,
+		offset: 0,
 	}
 }
 
@@ -37,7 +38,11 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		offset += r.offset
 	case io.SeekEnd:
-		return 0, errNoSupportSeekEnd
+		limit, ok := r.endMap.get(r.name)
+		if !ok {
+			panic("no find stream end")
+		}
+		offset += limit
 	}
 	begin, ok := r.index.begin()
 	if ok && offset < begin {

@@ -46,7 +46,7 @@ func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
 	if err := os.Rename(filename+".tmp", filename); err != nil {
 		return "", err
 	}
-	if err := _files.appendSegment(filename); err != nil {
+	if err := _files.appendSegment(appendSegment{Filename: filename}); err != nil {
 		return "", err
 	}
 	return filename, nil

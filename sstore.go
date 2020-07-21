@@ -20,10 +20,8 @@ import (
 )
 
 type SStore struct {
-	entryQueueSize uint32
-	entryQueue     *entryQueue
-
-	segments map[string]*segment
+	options    Options
+	entryQueue *entryQueue
 
 	entryID    int64
 	notifyPool sync.Pool
@@ -31,6 +29,22 @@ type SStore struct {
 	committer   *committer
 	indexTable  *indexTable
 	endWatchers *endWatchers
+}
+
+func OpenSStore(options Options) *SStore {
+	return &SStore{
+		options:     options,
+		entryQueue:  newEntryQueue(options.EntryQueueCap),
+		entryID:     0,
+		committer:   nil,
+		indexTable:  nil,
+		endWatchers: nil,
+		notifyPool:  sync.Pool{},
+	}
+}
+
+func (sstore *SStore) Options() Options {
+	return sstore.options
 }
 
 func (sstore *SStore) nextEntryID() int64 {

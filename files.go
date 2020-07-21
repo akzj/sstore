@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,10 +32,9 @@ type appendSegment struct {
 
 const (
 	appendSegmentType = "appendSegment"
-	fileSnapshotType  = "filesSnapshot"
+	filesSnapshotType = "filesSnapshot"
 	segmentExt        = ".seg"
 	filesWalExt       = ".files.log"
-	filesSnapshot     = ".files.snapshot"
 	filesWalExtTmp    = ".files.log.tmp"
 )
 
@@ -47,6 +47,7 @@ type files struct {
 	segmentIndex  int64
 	walIndex      int64
 	filesWalIndex int64
+	inRecovery    bool
 
 	EntryID      int64    `json:"entry_id"`
 	SegmentFiles []string `json:"segment_files"`
@@ -55,17 +56,97 @@ type files struct {
 	notifyS chan interface{}
 }
 
-func openFiles() *files {
-	return &files{}
+func openFiles(filesDir string, segmentDir string) *files {
+	return &files{
+		maxWalSize:    128 * 1024 * 1024,
+		l:             sync.RWMutex{},
+		segmentDir:    segmentDir,
+		filesDir:      filesDir,
+		segmentIndex:  0,
+		walIndex:      0,
+		filesWalIndex: 0,
+		inRecovery:    false,
+		EntryID:       0,
+		SegmentFiles:  nil,
+		WalFiles:      nil,
+		notifyS:       make(chan interface{}),
+	}
 }
 
 func (f *files) recovery() error {
-	return f.wal.read(func(e *entry) {
+	f.inRecovery = true
+	defer func() {
+		f.inRecovery = false
+	}()
+	var walFiles []string
+	err := filepath.Walk(f.filesDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(info.Name(), filesWalExtTmp) {
+			_ = os.Remove(path)
+		}
+		if strings.HasSuffix(info.Name(), filesWalExt) {
+			walFiles = append(walFiles, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(walFiles) == 0 {
+		f.filesWalIndex = 1
+		f.wal, err = openWal(filepath.Join(f.filesDir, "1"+filesWalExt))
+	} else {
+		sortIntFilename(walFiles)
+		f.wal, err = openWal(walFiles[len(walFiles)-1])
+		if err != nil {
+			return err
+		}
+	}
+
+	err = f.wal.read(func(e *entry) error {
+		f.EntryID = e.ID
 		switch e.name {
 		case appendSegmentType:
-		case fileSnapshotType:
+			var request appendSegment
+			if err := json.Unmarshal(e.data, &request); err != nil {
+				return err
+			}
+			return f.appendSegment(request)
+		case filesSnapshotType:
+			if err := json.Unmarshal(e.data, f); err != nil {
+				return err
+			}
 		}
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if len(f.SegmentFiles) > 0 {
+		sortIntFilename(f.SegmentFiles)
+		f.segmentIndex, err = parseFilenameIndex(f.SegmentFiles[len(f.SegmentFiles)-1])
+		if err != nil {
+			return err
+		}
+	}
+	if len(walFiles) > 0 {
+		for _, filename := range walFiles[:len(walFiles)-1] {
+			if err := os.Remove(filename); err != nil {
+				return err
+			}
+		}
+		f.filesWalIndex, err = parseFilenameIndex(walFiles[len(walFiles)-1])
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var _files *files
@@ -78,61 +159,68 @@ func (f *files) getNextSegment() string {
 func (f *files) makeSnapshot() {
 	f.l.Lock()
 	defer f.l.Unlock()
-	if f.wal.fileSize() > f.maxWalSize {
-		f.filesWalIndex++
-		f.EntryID++
-		tmpWal := strconv.FormatInt(f.filesWalIndex, 10) + filesWalExtTmp
-		tmpWal = filepath.Join(f.filesDir, tmpWal)
-		wal, err := createWal(tmpWal)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
-		data, _ := json.Marshal(f)
-		if err := wal.write(&entry{
-			ID:   f.EntryID,
-			name: fileSnapshotType,
-			data: data,
-			cb:   nil,
-		}); err != nil {
-			log.Fatal(err.Error())
-		}
-		if err := wal.flush(); err != nil {
-			log.Fatal(err.Error())
-		}
-		if err := wal.close(); err != nil {
-			log.Fatal(err.Error())
-		}
-		filename := strings.ReplaceAll(tmpWal, filesWalExtTmp, filesWalExt)
-		if err := os.Rename(tmpWal, filename); err != nil {
-			log.Fatal(err.Error())
-		}
-		if err := f.wal.flush(); err != nil {
-			log.Fatal(err.Error())
-		}
-		if err := f.wal.close(); err != nil {
-			log.Fatal(err.Error())
-		}
-		if err := os.Remove(f.wal.Filename()); err != nil {
-			log.Fatal(err.Error())
-		}
-		f.wal, err = openWal(filename)
-		if err != nil {
-			log.Fatal(err.Error())
-		}
+	if f.wal.fileSize() < f.maxWalSize {
+		return
+	}
+	f.filesWalIndex++
+	f.EntryID++
+	tmpWal := strconv.FormatInt(f.filesWalIndex, 10) + filesWalExtTmp
+	tmpWal = filepath.Join(f.filesDir, tmpWal)
+	wal, err := createWal(tmpWal)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	data, err := json.Marshal(f)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	if err := wal.write(&entry{
+		ID:   f.EntryID,
+		name: filesSnapshotType,
+		data: data,
+		cb:   nil,
+	}); err != nil {
+		log.Fatal(err.Error())
+	}
+	if err := wal.flush(); err != nil {
+		log.Fatal(err.Error())
+	}
+	if err := wal.close(); err != nil {
+		log.Fatal(err.Error())
+	}
+	filename := strings.ReplaceAll(tmpWal, filesWalExtTmp, filesWalExt)
+	if err := os.Rename(tmpWal, filename); err != nil {
+		log.Fatal(err.Error())
+	}
+	if err := f.wal.flush(); err != nil {
+		log.Fatal(err.Error())
+	}
+	if err := f.wal.close(); err != nil {
+		log.Fatal(err.Error())
+	}
+	if err := os.Remove(f.wal.Filename()); err != nil {
+		log.Fatal(err.Error())
+	}
+	f.wal, err = openWal(filename)
+	if err != nil {
+		log.Fatal(err.Error())
 	}
 }
 
-func (f *files) appendSegment(filename string) error {
+func (f *files) appendSegment(request appendSegment) error {
 	f.l.Lock()
 	defer f.l.Unlock()
 	for _, it := range f.SegmentFiles {
-		if it == filename {
+		if it == request.Filename {
 			return fmt.Errorf("filename repeated")
 		}
 	}
+	f.SegmentFiles = append(f.SegmentFiles, request.Filename)
+	if f.inRecovery {
+		return nil
+	}
 	f.EntryID++
-	f.SegmentFiles = append(f.SegmentFiles, filename)
-	data, _ := json.Marshal(appendSegment{Filename: filename})
+	data, _ := json.Marshal(request)
 	if err := f.wal.write(&entry{
 		ID:   f.EntryID,
 		name: appendSegmentType,
@@ -165,4 +253,21 @@ func (f *files) start() {
 			}
 		}
 	}()
+}
+
+func parseFilenameIndex(filename string) (int64, error) {
+	filename = filepath.Base(filename)
+	token := strings.SplitN(filename, ".", 2)[0]
+	return strconv.ParseInt(token, 10, 64)
+}
+
+func sortIntFilename(intFiles []string) {
+	sort.Slice(intFiles, func(i, j int) bool {
+		iLen := len(intFiles[i])
+		jLen := len(intFiles[j])
+		if iLen != jLen {
+			return iLen < jLen
+		}
+		return intFiles[i] < intFiles[j]
+	})
 }

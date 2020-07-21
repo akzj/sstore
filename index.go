@@ -112,10 +112,10 @@ func (index *offsetIndex) remove(item offsetItem) {
 }
 
 type indexTable struct {
-	l        sync.RWMutex
-	indexMap map[string]*offsetIndex
-
+	l            sync.RWMutex
 	commitAction chan func()
+	indexMap     map[string]*offsetIndex
+	endMap       *int64LockMap
 }
 
 func newIndexTable() *indexTable {
@@ -240,5 +240,5 @@ func (index *indexTable) reader(name string) *reader {
 	if offsetIndex == nil {
 		return nil
 	}
-	return newReader(name, 0, offsetIndex)
+	return newReader(name, offsetIndex, index.endMap)
 }

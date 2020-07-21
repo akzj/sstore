@@ -113,7 +113,7 @@ func (wal *wal) Filename() string {
 	return wal.filename
 }
 
-func (wal *wal) read(cb func(e *entry)) error {
+func (wal *wal) read(cb func(e *entry) error) error {
 	wal.l.RLock()
 	defer wal.l.RUnlock()
 	reader := bufio.NewReader(wal.f)
@@ -125,6 +125,8 @@ func (wal *wal) read(cb func(e *entry)) error {
 			}
 			return err
 		}
-		cb(e)
+		if err := cb(e); err != nil {
+			return err
+		}
 	}
 }
