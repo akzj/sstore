@@ -28,6 +28,7 @@ type Options struct {
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
 	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
 	EntryQueueCap                 int    `json:"entry_queue_cap"`
+	MaxWalSize                    int64    `json:"max_wal_size"`
 }
 
 func DefaultOptions(Path string) Options {

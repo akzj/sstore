@@ -50,17 +50,11 @@ func Open(options Options) (*SStore, error) {
 		indexTable:  newIndexTable(),
 		endWatchers: newEndWatchers(),
 	}
-	mStreamTable := newMStreamTable(sstore.endMap, options.BlockSize, 128)
-	commitQueue := newEntryQueue(options.EntryQueueCap)
-	committer := newCommitter(options, sstore.endWatchers,
-		sstore.indexTable, sstore.segments,
-		sstore.endMap, mStreamTable, commitQueue, options.BlockSize)
-	sstore.committer = committer
+
 	if err := recover(sstore); err != nil {
 		return nil, err
 	}
-
-	committer.start()
+	sstore.committer.start()
 	sstore.wWriter.start()
 	sstore.indexTable.start()
 	return sstore, nil

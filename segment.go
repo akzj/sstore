@@ -114,7 +114,9 @@ func openSegment(filename string) (*segment, error) {
 	})
 	return segment, nil
 }
-
+func (s *segment) lastEntryID() int64 {
+	return s.meta.LastEntryID
+}
 func (s *segment) offsetInfo(name string) (offsetInfo, error) {
 	indexInfo, ok := s.meta.OffSetInfos[name]
 	if ok == false {

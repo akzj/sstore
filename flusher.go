@@ -13,15 +13,15 @@
 
 package sstore
 
-import "os"
-
 type flusher struct {
 	items chan func()
+	files *files
 }
 
-func newFlusher() *flusher {
+func newFlusher(files *files) *flusher {
 	return &flusher{
 		items: make(chan func(), 1),
+		files: files,
 	}
 }
 
@@ -32,8 +32,8 @@ func (flusher *flusher) append(table *mStreamTable, cb func(segment string, err 
 }
 
 func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
-	var filename = _files.getNextSegment()
-	segment, err := createSegment(filename + ".tmp")
+	var filename = flusher.files.getNextSegment()
+	segment, err := createSegment(filename)
 	if err != nil {
 		return "", err
 	}
@@ -41,12 +41,6 @@ func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
 		return "", err
 	}
 	if err := segment.close(); err != nil {
-		return "", err
-	}
-	if err := os.Rename(filename+".tmp", filename); err != nil {
-		return "", err
-	}
-	if err := _files.appendSegment(appendSegment{Filename: filename}); err != nil {
 		return "", err
 	}
 	return filename, nil

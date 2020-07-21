@@ -15,6 +15,7 @@ package sstore
 
 import (
 	"log"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -37,6 +38,7 @@ type committer struct {
 
 	indexTable  *indexTable
 	endWatchers *endWatchers
+	files       *files
 
 	blockSize int64
 }
@@ -47,8 +49,11 @@ func newCommitter(options Options,
 	segments map[string]*segment,
 	sizeMap *int64LockMap,
 	mutableMStreamMap *mStreamTable,
-	queue *entryQueue, blockSize int64) *committer {
+	queue *entryQueue,
+	files *files,
+	blockSize int64) *committer {
 	return &committer{
+		files:                         files,
 		queue:                         queue,
 		blockSize:                     blockSize,
 		maxMStreamTableSize:           options.MaxMStreamTableSize,
@@ -56,7 +61,7 @@ func newCommitter(options Options,
 		sizeMap:                       sizeMap,
 		immutableMStreamMaps:          make([]*mStreamTable, 0, 32),
 		locker:                        new(sync.RWMutex),
-		flusher:                       newFlusher(),
+		flusher:                       newFlusher(files),
 		segments:                      segments,
 		segmentsLocker:                new(sync.RWMutex),
 		indexTable:                    indexTable,
@@ -69,8 +74,15 @@ func (c *committer) appendSegment(filename string, segment *segment) {
 	c.segmentsLocker.Lock()
 	defer c.segmentsLocker.Unlock()
 	segment.refInc()
-	c.segments[filename] = segment
+	c.segments[filepath.Base(filename)] = segment
 	c.indexTable.update1(segment)
+}
+
+func (c *committer) getSegment(filename string) *segment {
+	c.segmentsLocker.Lock()
+	defer c.segmentsLocker.Unlock()
+	segment, _ := c.segments[filename]
+	return segment
 }
 
 func (c *committer) deleteSegment(filename string) error {
@@ -107,12 +119,14 @@ func (c *committer) flushCallback(filename string, table *mStreamTable) {
 	c.locker.Unlock()
 
 	c.appendSegment(filename, segment)
-
 	if remove {
 		//update indexTable
 		for _, mStream := range table.mStreams {
 			c.indexTable.remove(mStream)
 		}
+	}
+	if err := c.files.appendSegment(appendSegment{Filename: filename}); err != nil {
+		log.Fatal(err.Error())
 	}
 }
 
@@ -123,11 +137,11 @@ func (c *committer) flush() {
 	c.locker.Lock()
 	c.immutableMStreamMaps = append(c.immutableMStreamMaps, mStreamMap)
 	c.locker.Unlock()
-	c.flusher.append(mStreamMap, func(segmentFile string, err error) {
+	c.flusher.append(mStreamMap, func(filename string, err error) {
 		if err != nil {
 			log.Fatal(err.Error())
 		}
-		c.flushCallback(segmentFile, mStreamMap)
+		c.flushCallback(filename, mStreamMap)
 	})
 }
 
@@ -167,7 +181,8 @@ type mStreamTable struct {
 	blockSize   int64
 }
 
-func newMStreamTable(sizeMap *int64LockMap, blockSize int64, mStreamMapSize int) *mStreamTable {
+func newMStreamTable(sizeMap *int64LockMap,
+	blockSize int64, mStreamMapSize int) *mStreamTable {
 	return &mStreamTable{
 		blockSize:   blockSize,
 		mSize:       0,

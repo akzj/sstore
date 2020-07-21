@@ -15,38 +15,130 @@ package sstore
 
 import (
 	"bufio"
-	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"github.com/pkg/errors"
 	"io"
 	"os"
-	"sync"
 )
 
-const version = "1.0.0"
+const version1 = "ver1"
+const maxHeaderSize = 1024
 
 type walHeader struct {
-	Version      string
-	Filename     string
-	FirstEntryID int64
-	LastEntryID  int64
+	Version      string `json:"V"`
+	FirstEntryID int64  `json:"F"`
+	LastEntryID  int64  `json:"L"`
+	Old          bool   `json:"O"`
 }
 
 // write ahead log
 type wal struct {
 	filename string
-	l        sync.RWMutex
 	size     int64
 	f        *os.File
-	bCap     int
-	buffer   *bytes.Buffer
+	buffer   *bufio.Writer
 	header   walHeader
 }
 
 func openWal(filename string) (*wal, error) {
-	return &wal{}, nil
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	w := &wal{
+		filename: filename,
+		size:     0,
+		f:        f,
+		buffer:   bufio.NewWriterSize(f, 4*1024*1024),
+		header: walHeader{
+			Version:      version1,
+			FirstEntryID: -1,
+			LastEntryID:  -1,
+		},
+	}
+	var dataLen int32
+	if err := binary.Read(f, binary.BigEndian, &dataLen); err != nil {
+		_ = f.Close()
+		return nil, errors.WithStack(err)
+	}
+	if dataLen > maxHeaderSize {
+		return nil, errors.Errorf("headerSize %d > %d", dataLen, maxHeaderSize)
+	}
+	data := make([]byte, dataLen)
+	if _, err := f.Read(data); err != nil {
+		_ = f.Close()
+		return nil, errors.WithStack(err)
+	}
+	if err := json.Unmarshal(data, &w.header); err != nil {
+		return nil, errors.WithStack(err)
+	}
+	if err := w.seekStart(); err != nil {
+		return nil, err
+	}
+	return w, nil
 }
 
 func createWal(filename string) (*wal, error) {
-	return &wal{}, nil
+	f, err := os.Create(filename)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	w := &wal{
+		filename: filename,
+		size:     0,
+		f:        f,
+		buffer:   bufio.NewWriterSize(f, 4*1024*1024),
+		header: walHeader{
+			Version:      version1,
+			FirstEntryID: -1,
+			LastEntryID:  -1,
+			Old:          false,
+		},
+	}
+	if err := w.flushHeader(false); err != nil {
+		_ = f.Close()
+		_ = os.Remove(filename)
+		return nil, err
+	}
+	if err := w.seekStart(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(filename)
+		return nil, err
+	}
+	return w, nil
+}
+
+func (wal *wal) seekStart() error {
+	if _, err := wal.f.Seek(maxHeaderSize, io.SeekStart); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func (wal *wal) seekEnd() error {
+	if _, err := wal.f.Seek(0, io.SeekEnd); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
+}
+
+func (wal *wal) flushHeader(old bool) error {
+	wal.header.Old = old
+	data, _ := json.Marshal(wal.header)
+	if _, err := wal.f.Seek(0, io.SeekStart); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := binary.Write(wal.f, binary.BigEndian, int32(len(data))); err != nil {
+		return errors.WithStack(err)
+	}
+	if _, err := wal.f.Write(data); err != nil {
+		return errors.WithStack(err)
+	}
+	if _, err := wal.f.Seek(0, io.SeekEnd); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 func (wal *wal) getHeader() walHeader {
@@ -54,41 +146,23 @@ func (wal *wal) getHeader() walHeader {
 }
 
 func (wal *wal) flush() error {
-	wal.l.Lock()
-	defer wal.l.Unlock()
-	if wal.buffer.Len() > 0 {
-		if n, err := wal.f.Write(wal.buffer.Bytes()); err != nil {
-			return err
-		} else {
-			wal.size += int64(n)
-		}
-		wal.buffer.Reset()
+	if err := wal.buffer.Flush(); err != nil {
+		return errors.WithStack(err)
 	}
 	return nil
 }
 
 func (wal *wal) sync() error {
-	return wal.f.Sync()
+	if err := wal.f.Sync(); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 func (wal *wal) write(e *entry) error {
-	wal.l.Lock()
-	defer wal.l.Unlock()
 	wal.header.LastEntryID = e.ID
 	if wal.header.FirstEntryID == -1 {
 		wal.header.FirstEntryID = e.ID
-	}
-	if wal.buffer.Len()+len(e.data) > wal.bCap {
-		if err := wal.flush(); err != nil {
-			return err
-		}
-		if len(e.data) > wal.bCap {
-			if err := e.write(wal.f); err != nil {
-				return err
-			}
-			wal.size += int64(e.size())
-			return nil
-		}
 	}
 	if err := e.write(wal.buffer); err != nil {
 		return err
@@ -98,15 +172,17 @@ func (wal *wal) write(e *entry) error {
 }
 
 func (wal *wal) fileSize() int64 {
-	wal.l.RLock()
-	defer wal.l.RUnlock()
 	return wal.size
 }
 
 func (wal *wal) close() error {
-	wal.l.Lock()
-	defer wal.l.Unlock()
-	return wal.f.Close()
+	if err := wal.flush(); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := wal.f.Close(); err != nil {
+		return errors.WithStack(err)
+	}
+	return nil
 }
 
 func (wal *wal) Filename() string {
@@ -114,8 +190,6 @@ func (wal *wal) Filename() string {
 }
 
 func (wal *wal) read(cb func(e *entry) error) error {
-	wal.l.RLock()
-	defer wal.l.RUnlock()
 	reader := bufio.NewReader(wal.f)
 	for {
 		e, err := decodeEntry(reader)
@@ -123,7 +197,7 @@ func (wal *wal) read(cb func(e *entry) error) error {
 			if err == io.EOF {
 				return nil
 			}
-			return err
+			return errors.WithStack(err)
 		}
 		if err := cb(e); err != nil {
 			return err

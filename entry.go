@@ -16,6 +16,7 @@ package sstore
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/pkg/errors"
 	"io"
 	"sync"
 )
@@ -49,22 +50,22 @@ func (e *entry) encode() []byte {
 
 func (e *entry) write(writer io.Writer) error {
 	if err := binary.Write(writer, binary.BigEndian, uint32(e.size())); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if err := binary.Write(writer, binary.BigEndian, uint32(len(e.name))); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if err := binary.Write(writer, binary.BigEndian, uint32(len(e.data))); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if err := binary.Write(writer, binary.BigEndian, e.ID); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if _, err := writer.Write([]byte(e.name)); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if _, err := writer.Write(e.data); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -94,14 +95,14 @@ func decodeEntry(reader io.Reader) (*entry, error) {
 
 	n, err := reader.Read(name)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	if n != int(nameLen) {
 		return nil, io.ErrUnexpectedEOF
 	}
 	n, err = reader.Read(e.data)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	if n != int(dataLen) {
 		return nil, io.ErrUnexpectedEOF

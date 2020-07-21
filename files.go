@@ -16,6 +16,7 @@ package sstore
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pkg/errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -26,18 +27,16 @@ import (
 	"sync/atomic"
 )
 
-type appendSegment struct {
+type deleteWal struct {
+	Filename string `json:"filename"`
+}
+type appendWal struct {
 	Filename string `json:"filename"`
 }
 
-const (
-	appendSegmentType = "appendSegment"
-	filesSnapshotType = "filesSnapshot"
-	segmentExt        = ".seg"
-	WalExt            = ".log"
-	filesWalExt       = ".files.log"
-	filesWalExtTmp    = ".files.log.tmp"
-)
+type appendSegment struct {
+	Filename string `json:"filename"`
+}
 
 type files struct {
 	maxWalSize    int64
@@ -57,6 +56,17 @@ type files struct {
 
 	notifyS chan interface{}
 }
+
+const (
+	appendSegmentType = "appendSegment"
+	appendWalType     = "appendWal"
+	deleteWalType     = "deleteWal"
+	filesSnapshotType = "filesSnapshot"
+	segmentExt        = ".seg"
+	WalExt            = ".log"
+	filesWalExt       = ".files"
+	filesWalExtTmp    = ".files.tmp"
+)
 
 func openFiles(filesDir string, segmentDir string, walDir string) *files {
 	return &files{
@@ -79,6 +89,7 @@ func openFiles(filesDir string, segmentDir string, walDir string) *files {
 func copyStrings(strings []string) []string {
 	return append(make([]string, 0, len(strings)), strings...)
 }
+
 func (f *files) getSegmentFiles() []string {
 	f.l.RLock()
 	defer f.l.RUnlock()
@@ -99,7 +110,7 @@ func (f *files) recovery() error {
 	var walFiles []string
 	err := filepath.Walk(f.filesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 		if info.IsDir() {
 			return nil
@@ -113,7 +124,7 @@ func (f *files) recovery() error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 
 	if len(walFiles) == 0 {
@@ -123,7 +134,7 @@ func (f *files) recovery() error {
 		sortIntFilename(walFiles)
 		f.wal, err = openWal(walFiles[len(walFiles)-1])
 		if err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 	}
 
@@ -133,41 +144,45 @@ func (f *files) recovery() error {
 		case appendSegmentType:
 			var request appendSegment
 			if err := json.Unmarshal(e.data, &request); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 			return f.appendSegment(request)
+		case appendWalType:
+			var appendW appendWal
+			if err := json.Unmarshal(e.data, &appendW); err != nil {
+				return errors.WithStack(err)
+			}
+			return f.appendWal(appendW)
 		case filesSnapshotType:
 			if err := json.Unmarshal(e.data, f); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if len(f.SegmentFiles) > 0 {
 		sortIntFilename(f.SegmentFiles)
 		f.segmentIndex, err = parseFilenameIndex(f.SegmentFiles[len(f.SegmentFiles)-1])
 		if err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 	}
 	if len(walFiles) > 0 {
 		for _, filename := range walFiles[:len(walFiles)-1] {
 			if err := os.Remove(filename); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 		}
 		f.filesWalIndex, err = parseFilenameIndex(walFiles[len(walFiles)-1])
 		if err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 	}
 	return nil
 }
-
-var _files *files
 
 func (f *files) getNextSegment() string {
 	atomic.AddInt64(&f.segmentIndex, 1)
@@ -186,11 +201,11 @@ func (f *files) makeSnapshot() {
 	tmpWal = filepath.Join(f.filesDir, tmpWal)
 	wal, err := createWal(tmpWal)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	data, err := json.Marshal(f)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	if err := wal.write(&entry{
 		ID:   f.EntryID,
@@ -198,31 +213,71 @@ func (f *files) makeSnapshot() {
 		data: data,
 		cb:   nil,
 	}); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	if err := wal.flush(); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	if err := wal.close(); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	filename := strings.ReplaceAll(tmpWal, filesWalExtTmp, filesWalExt)
 	if err := os.Rename(tmpWal, filename); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	if err := f.wal.flush(); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	if err := f.wal.close(); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	if err := os.Remove(f.wal.Filename()); err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
 	f.wal, err = openWal(filename)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatal(err)
 	}
+}
+
+func (f *files) deleteWal(deleteW deleteWal) error {
+	f.l.Lock()
+	defer f.l.Unlock()
+	filename := filepath.Base(deleteW.Filename)
+	var find = false
+	for index, file := range f.WalFiles {
+		if file == filename {
+			copy(f.WalFiles[index:], f.WalFiles[index+1:])
+			f.WalFiles = f.WalFiles[:len(f.WalFiles)-1]
+			find = true
+			break
+		}
+	}
+	if find == false {
+		return errors.Errorf("no find wal file [%s]", filename)
+	}
+	if f.inRecovery {
+		return nil
+	}
+	data, _ := json.Marshal(deleteW)
+	return f.writeEntry(deleteWalType, data)
+}
+
+func (f *files) appendWal(appendW appendWal) error {
+	f.l.Lock()
+	defer f.l.Unlock()
+	filename := filepath.Base(appendW.Filename)
+	for _, file := range f.WalFiles {
+		if file == filename {
+			return fmt.Errorf("wal filename repeated")
+		}
+	}
+	f.WalFiles = append(f.WalFiles, filename)
+	if f.inRecovery {
+		return nil
+	}
+	data, _ := json.Marshal(appendW)
+	return f.writeEntry(appendWalType, data)
 }
 
 func (f *files) appendSegment(appendS appendSegment) error {
@@ -231,24 +286,28 @@ func (f *files) appendSegment(appendS appendSegment) error {
 	filename := filepath.Base(appendS.Filename)
 	for _, file := range f.SegmentFiles {
 		if file == filename {
-			return fmt.Errorf("filename repeated")
+			return fmt.Errorf("segment filename repeated")
 		}
 	}
 	f.SegmentFiles = append(f.SegmentFiles, filename)
 	if f.inRecovery {
 		return nil
 	}
-	f.EntryID++
 	data, _ := json.Marshal(appendS)
+	return f.writeEntry(appendSegmentType, data)
+}
+
+func (f *files) writeEntry(typ string, data []byte, ) error {
+	f.EntryID++
 	if err := f.wal.write(&entry{
 		ID:   f.EntryID,
-		name: appendSegmentType,
+		name: typ,
 		data: data,
 	}); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if err := f.wal.flush(); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if f.wal.fileSize() > f.maxWalSize {
 		f.notifySnapshot()

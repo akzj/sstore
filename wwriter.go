@@ -13,25 +13,58 @@
 
 package sstore
 
-import "log"
+import (
+	"github.com/pkg/errors"
+	"log"
+	"path/filepath"
+)
 
 type wWriter struct {
-	wal    *wal
-	queue  *entryQueue
-	commit *entryQueue
+	wal        *wal
+	queue      *entryQueue
+	commit     *entryQueue
+	files      *files
+	maxWalSize int64
 }
 
-func newWWriter(w *wal, queue *entryQueue, commitQueue *entryQueue) *wWriter {
+func newWWriter(w *wal, queue *entryQueue,
+	commitQueue *entryQueue,
+	files *files, maxWalSize int64) *wWriter {
 	return &wWriter{
-		wal:    w,
-		queue:  queue,
-		commit: commitQueue,
+		wal:        w,
+		queue:      queue,
+		commit:     commitQueue,
+		files:      files,
+		maxWalSize: maxWalSize,
 	}
 }
 
 //append the entry to the queue of writer
 func (worker *wWriter) append(e *entry) {
 	worker.queue.put(e)
+}
+
+func (worker *wWriter) walFilename() string {
+	return filepath.Base(worker.wal.Filename())
+}
+
+func (worker *wWriter) createNewWal() error {
+	walFile := worker.files.getNextWal()
+	wal, err := createWal(walFile)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	if err := worker.files.appendWal(appendWal{Filename: walFile}); err != nil {
+		return err
+	}
+	if err := worker.wal.flushHeader(true); err != nil {
+		return err
+	}
+	if err := worker.wal.close(); err != nil {
+		return err
+	}
+	worker.wal = wal
+	return nil
 }
 
 func (worker *wWriter) start() {
@@ -41,6 +74,12 @@ func (worker *wWriter) start() {
 			entries := worker.queue.take()
 			for i := range entries {
 				e := entries[i]
+				if worker.wal.fileSize() > worker.maxWalSize {
+					if err := worker.createNewWal(); err != nil {
+						e.cb(err)
+						continue
+					}
+				}
 				if err := worker.wal.write(e); err != nil {
 					e.cb(err)
 				} else {
