@@ -47,6 +47,7 @@ func (worker *wWriter) start() {
 					commit = append(commit, e)
 				}
 			}
+			entriesPool.Put(entries)
 			if len(commit) > 0 {
 				if err := worker.wal.flush(); err != nil {
 					log.Fatal(err.Error())

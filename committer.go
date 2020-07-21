@@ -143,16 +143,15 @@ func (c *committer) start() {
 						c.indexTable.update(mStream)
 					})
 				}
-
 				item := notifyItemPool.Get().(*notifyItem)
 				item.name = entry.name
 				item.end = end
 				c.endWatchers.notify(item)
-
 				if c.mutableMStreamMap.mSize >= c.maxMStreamTableSize {
 					c.flush()
 				}
 			}
+			entriesPool.Put(entries)
 		}
 	}()
 }

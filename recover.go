@@ -19,7 +19,6 @@ import (
 
 //recover segment,wal,index
 func recover(sStore *SStore) error {
-
 	files := openFiles(sStore.options.FilesDir,
 		sStore.options.SegmentDir,
 		sStore.options.WalDir)
