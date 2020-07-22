@@ -40,21 +40,18 @@ func (sstore *SStore) gcWal() error {
 			continue
 		}
 		walFile := filepath.Join(sstore.options.WalDir, filename)
-		wal, err := openWal(walFile)
+		header, err := sstore.files.getWalHeader(filename)
 		if err != nil {
 			continue
 		}
-		walHeader := wal.getHeader()
-		if walHeader.Old && walHeader.LastEntryID <= LastEntryID {
-			if err := wal.close(); err != nil {
-				return err
-			}
+		if header.Old && header.LastEntryID <= LastEntryID {
 			if err := sstore.files.deleteWal(deleteWal{Filename: filename}); err != nil {
 				return err
 			}
 			if err := os.Remove(walFile); err != nil {
 				return errors.WithStack(err)
 			}
+			_ = sstore.files.delWalHeader(delWalHeader{Filename: filename})
 		}
 	}
 	return nil
@@ -75,6 +72,9 @@ func (sstore *SStore) gcSegment() error {
 			return err
 		}
 		if err := sstore.committer.deleteSegment(filename); err != nil {
+			return err
+		}
+		if err := sstore.files.deleteSegment(deleteSegment{Filename: filename}); err != nil {
 			return err
 		}
 	}

@@ -32,8 +32,8 @@ func mkdir(dir string) error {
 	return nil
 }
 
-//recover segment,wal,index
-func recover(sStore *SStore) error {
+//reload segment,wal,index
+func reload(sStore *SStore) error {
 	for _, dir := range []string{
 		sStore.options.WalDir,
 		sStore.options.FilesDir,
@@ -89,11 +89,11 @@ func recover(sStore *SStore) error {
 		}
 
 		//skip
-		/*
-			walHeader := wal.getHeader()
+		if walHeader, err := files.getWalHeader(file); err == nil {
 			if walHeader.Old && walHeader.LastEntryID <= sStore.entryID {
 				continue
-			}*/
+			}
+		}
 		if err := wal.seekStart(); err != nil {
 			return err
 		}
