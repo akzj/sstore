@@ -41,6 +41,9 @@ type committer struct {
 	files       *files
 
 	blockSize int64
+
+	callbackWorker *callbackWorker
+	callbackQueue  *entryQueue
 }
 
 func newCommitter(options Options,
@@ -52,6 +55,9 @@ func newCommitter(options Options,
 	queue *entryQueue,
 	files *files,
 	blockSize int64) *committer {
+
+	callbackQueue := newEntryQueue(128)
+
 	return &committer{
 		files:                         files,
 		queue:                         queue,
@@ -67,6 +73,8 @@ func newCommitter(options Options,
 		indexTable:                    indexTable,
 		endWatchers:                   endWatchers,
 		maxImmutableMStreamTableCount: options.MaxImmutableMStreamTableCount,
+		callbackWorker:                newCallbackWorker(callbackQueue),
+		callbackQueue:                 callbackQueue,
 	}
 }
 
@@ -146,6 +154,7 @@ func (c *committer) flush() {
 }
 
 func (c *committer) start() {
+	c.callbackWorker.start()
 	go func() {
 		for {
 			entries := c.queue.take()
@@ -165,7 +174,27 @@ func (c *committer) start() {
 					c.flush()
 				}
 			}
-			entriesPool.Put(entries)
+			c.callbackQueue.putEntries(entries)
+		}
+	}()
+}
+
+type callbackWorker struct {
+	queue *entryQueue
+}
+
+func newCallbackWorker(queue *entryQueue) *callbackWorker {
+	return &callbackWorker{queue: queue}
+}
+
+func (worker *callbackWorker) start() {
+	go func() {
+		for {
+			entries := worker.queue.take()
+			for index := range entries {
+				e := entries[index]
+				e.cb(nil)
+			}
 		}
 	}()
 }
