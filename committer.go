@@ -42,8 +42,8 @@ type committer struct {
 
 	blockSize int64
 
-	callbackWorker *callbackWorker
-	callbackQueue  *entryQueue
+	cbWorker      *cbWorker
+	callbackQueue *entryQueue
 }
 
 func newCommitter(options Options,
@@ -56,7 +56,7 @@ func newCommitter(options Options,
 	files *files,
 	blockSize int64) *committer {
 
-	callbackQueue := newEntryQueue(128)
+	cbQueue := newEntryQueue(128)
 
 	return &committer{
 		files:                         files,
@@ -73,8 +73,8 @@ func newCommitter(options Options,
 		indexTable:                    indexTable,
 		endWatchers:                   endWatchers,
 		maxImmutableMStreamTableCount: options.MaxImmutableMStreamTableCount,
-		callbackWorker:                newCallbackWorker(callbackQueue),
-		callbackQueue:                 callbackQueue,
+		cbWorker:                      newCbWorker(cbQueue),
+		callbackQueue:                 cbQueue,
 	}
 }
 
@@ -83,7 +83,9 @@ func (c *committer) appendSegment(filename string, segment *segment) {
 	defer c.segmentsLocker.Unlock()
 	segment.refInc()
 	c.segments[filepath.Base(filename)] = segment
-	c.indexTable.update1(segment)
+	if err := c.indexTable.update1(segment); err != nil {
+		log.Fatalf("%+v", err)
+	}
 }
 
 func (c *committer) getSegment(filename string) *segment {
@@ -115,9 +117,6 @@ func (c *committer) flushCallback(filename string, table *mStreamTable) {
 	}
 	var remove = false
 	c.locker.Lock()
-	if c.immutableMStreamMaps[0] != table {
-		panic("flushCallback error")
-	}
 	if len(c.immutableMStreamMaps) > c.maxImmutableMStreamTableCount {
 		copy(c.immutableMStreamMaps[0:], c.immutableMStreamMaps[1:])
 		c.immutableMStreamMaps[len(c.immutableMStreamMaps)-1] = nil
@@ -154,15 +153,16 @@ func (c *committer) flush() {
 }
 
 func (c *committer) start() {
-	c.callbackWorker.start()
+	c.cbWorker.start()
+	c.flusher.start()
 	go func() {
 		for {
 			entries := c.queue.take()
 			for i := range entries {
 				e := entries[i]
-				if e.ID == closeID {
-					c.callbackQueue.put(e)
+				if e.ID == closeSignal {
 					c.flusher.close()
+					c.callbackQueue.put(e)
 					return
 				}
 				mStream, end := c.mutableMStreamMap.appendEntry(e)
@@ -171,7 +171,7 @@ func (c *committer) start() {
 						c.indexTable.update(mStream)
 					})
 				}
-				item := notifyItemPool.Get().(*notify)
+				item := notifyPool.Get().(*notify)
 				item.name = e.name
 				item.end = end
 				c.endWatchers.notify(item)
@@ -184,25 +184,27 @@ func (c *committer) start() {
 	}()
 }
 
-type callbackWorker struct {
+type cbWorker struct {
 	queue *entryQueue
 }
 
-func newCallbackWorker(queue *entryQueue) *callbackWorker {
-	return &callbackWorker{queue: queue}
+func newCbWorker(queue *entryQueue) *cbWorker {
+	return &cbWorker{queue: queue}
 }
 
-func (worker *callbackWorker) start() {
+func (worker *cbWorker) start() {
 	go func() {
 		for {
 			entries := worker.queue.take()
 			for index := range entries {
 				e := entries[index]
-				if e.ID == closeID {
+				if e.ID == closeSignal {
+					e.cb(nil)
 					return
 				}
 				e.cb(nil)
 			}
+			entriesPool.Put(entries[:0])
 		}
 	}()
 }

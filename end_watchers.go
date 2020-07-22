@@ -2,7 +2,6 @@ package sstore
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 type endWatcher struct {
@@ -24,10 +23,10 @@ type endWatchers struct {
 	l           *sync.Mutex
 	cond        *sync.Cond
 	notifyItems []*notify
-	isClose     int32
+	s           chan interface{}
 }
 
-var notifyItemPool = sync.Pool{New: func() interface{} {
+var notifyPool = sync.Pool{New: func() interface{} {
 	return new(notify)
 }}
 
@@ -38,8 +37,9 @@ func newEndWatchers() *endWatchers {
 		l:              l,
 		cond:           sync.NewCond(l),
 		endWatcherLock: new(sync.RWMutex),
-		notifyItems:    make([]*notify, 1024),
+		notifyItems:    make([]*notify, 0, 1024),
 		endWatcherMap:  make(map[string][]endWatcher),
+		s:              make(chan interface{}, 1),
 	}
 }
 func (endWatchers *endWatchers) removeEndWatcher(index int64, name string) {
@@ -96,29 +96,28 @@ func (endWatchers *endWatchers) take(buf []*notify) []*notify {
 
 func (endWatchers *endWatchers) start() {
 	go func() {
-		var buf = make([]*notify, 128)
+		var buf = make([]*notify, 0, 1024)
 		for {
 			items := endWatchers.take(buf)
-			if atomic.LoadInt32(&endWatchers.isClose) == 1 {
-				return
-			}
+			buf = items
+
 			for _, item := range items {
+				if item.end == closeSignal {
+					close(endWatchers.s)
+					return
+				}
 				for _, watcher := range endWatchers.getEndWatcher(item.name) {
 					watcher.notify(item.end)
 				}
-				notifyItemPool.Put(item)
+				notifyPool.Put(item)
 			}
-			buf = items
 		}
 	}()
 }
 
 func (endWatchers *endWatchers) close() {
-	atomic.StoreInt32(&endWatchers.isClose, 1)
-	endWatchers.notify(&notify{
-		name: "",
-		end:  0,
-	})
+	endWatchers.notify(&notify{end: closeSignal})
+	<-endWatchers.s
 }
 
 func (endWatchers *endWatchers) notify(item *notify) {

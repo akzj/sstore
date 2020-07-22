@@ -14,6 +14,7 @@
 package sstore
 
 import (
+	"github.com/pkg/errors"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ type SStore struct {
 	endWatchers *endWatchers
 	wWriter     *wWriter
 	files       *files
+	isClose     int32
 }
 
 func Open(options Options) (*SStore, error) {
@@ -52,10 +54,6 @@ func Open(options Options) (*SStore, error) {
 	if err := reload(sstore); err != nil {
 		return nil, err
 	}
-	sstore.committer.start()
-	sstore.wWriter.start()
-	sstore.indexTable.start()
-	sstore.files.start()
 	return sstore, nil
 }
 
@@ -125,6 +123,9 @@ func (sstore *SStore) Exist(name string) bool {
 
 //Close sstore
 func (sstore *SStore) Close() error {
+	if atomic.CompareAndSwapInt32(&sstore.isClose, 0, 1) == false {
+		return errors.New("repeated close")
+	}
 	sstore.wWriter.close()
 	sstore.files.close()
 	sstore.endWatchers.close()

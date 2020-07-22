@@ -16,7 +16,9 @@ package sstore
 import (
 	"github.com/pkg/errors"
 	"log"
+	"math"
 	"path/filepath"
+	"sync"
 )
 
 type wWriter struct {
@@ -69,7 +71,7 @@ func (worker *wWriter) createNewWal() error {
 	return nil
 }
 
-const closeID = -1
+const closeSignal = math.MinInt64
 
 func (worker *wWriter) start() {
 	go func() {
@@ -78,7 +80,7 @@ func (worker *wWriter) start() {
 			entries := worker.queue.take()
 			for i := range entries {
 				e := entries[i]
-				if e.ID == closeID {
+				if e.ID == closeSignal {
 					_ = worker.wal.close()
 					worker.commit.put(e)
 					return
@@ -95,7 +97,6 @@ func (worker *wWriter) start() {
 					commit = append(commit, e)
 				}
 			}
-			entriesPool.Put(entries)
 			if len(commit) > 0 {
 				if err := worker.wal.flush(); err != nil {
 					log.Fatal(err.Error())
@@ -107,10 +108,13 @@ func (worker *wWriter) start() {
 }
 
 func (worker *wWriter) close() {
+	var wg sync.WaitGroup
+	wg.Add(1)
 	worker.queue.put(&entry{
-		ID:   closeID,
-		name: "",
-		data: nil,
-		cb:   nil,
+		ID: closeSignal,
+		cb: func(err error) {
+			wg.Done()
+		},
 	})
+	wg.Wait()
 }

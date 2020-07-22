@@ -13,17 +13,21 @@
 
 package sstore
 
+import "fmt"
+
 type flusher struct {
-	items chan func()
 	files *files
+	items chan func()
 	c     chan interface{}
+	s     chan interface{}
 }
 
 func newFlusher(files *files) *flusher {
 	return &flusher{
-		items: make(chan func(), 1),
 		files: files,
-		c:     make(chan interface{}),
+		items: make(chan func(), 1),
+		c:     make(chan interface{}, 1),
+		s:     make(chan interface{}, 1),
 	}
 }
 
@@ -39,6 +43,7 @@ func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	fmt.Println("start flush segment:" + filename)
 	if err := segment.flushMStreamTable(table); err != nil {
 		return "", err
 	}
@@ -49,6 +54,7 @@ func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
 }
 func (flusher *flusher) close() {
 	close(flusher.c)
+	<-flusher.s
 }
 
 func (flusher *flusher) start() {
@@ -56,6 +62,7 @@ func (flusher *flusher) start() {
 		for {
 			select {
 			case <-flusher.c:
+				close(flusher.s)
 				return
 			case f := <-flusher.items:
 				f()

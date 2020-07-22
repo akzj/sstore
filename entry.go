@@ -16,6 +16,7 @@ package sstore
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"github.com/pkg/errors"
 	"io"
 	"sync"
@@ -88,25 +89,26 @@ func decodeEntry(reader io.Reader) (*entry, error) {
 		return nil, err
 	}
 	if size != nameLen+dataLen+16 {
-		return nil, io.ErrUnexpectedEOF
+		return nil, errors.WithStack(io.ErrUnexpectedEOF)
 	}
 	var name = make([]byte, nameLen)
 	e.data = make([]byte, dataLen)
 
-	n, err := reader.Read(name)
+	n, err := io.ReadFull(reader, name)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
 	e.name = string(name)
 	if n != int(nameLen) {
-		return nil, io.ErrUnexpectedEOF
+		return nil, errors.WithStack(io.ErrUnexpectedEOF)
 	}
-	n, err = reader.Read(e.data)
+	n, err = io.ReadFull(reader, e.data)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
 	if n != int(dataLen) {
-		return nil, io.ErrUnexpectedEOF
+		return nil, errors.WithMessage(io.ErrUnexpectedEOF,
+			fmt.Sprintf("n[%d] datalen[%d]", n, dataLen))
 	}
 	return e, nil
 }

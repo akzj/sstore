@@ -15,7 +15,6 @@ package sstore
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/pkg/errors"
 	"log"
 	"os"
@@ -65,6 +64,7 @@ type files struct {
 
 	notifyS chan interface{}
 	c       chan interface{}
+	s       chan interface{}
 }
 
 const (
@@ -85,12 +85,23 @@ const (
 
 func openFiles(filesDir string, segmentDir string, walDir string) (*files, error) {
 	files := &files{
-		maxWalSize: 128 * 1024 * 1024,
-		segmentDir: segmentDir,
-		filesDir:   filesDir,
-		walDir:     walDir,
-		notifyS:    make(chan interface{}, 1),
-		c:          make(chan interface{}),
+		maxWalSize:    128 * MB,
+		wal:           nil,
+		l:             sync.RWMutex{},
+		segmentDir:    segmentDir,
+		filesDir:      filesDir,
+		walDir:        walDir,
+		segmentIndex:  0,
+		walIndex:      0,
+		filesWalIndex: 0,
+		inRecovery:    false,
+		EntryID:       0,
+		SegmentFiles:  make([]string, 0, 128),
+		WalFiles:      make([]string, 0, 128),
+		notifyS:       make(chan interface{}, 1),
+		c:             make(chan interface{}, 1),
+		s:             make(chan interface{}, 1),
+		WalHeaderMap:  make(map[string]walHeader),
 	}
 	if err := files.recovery(); err != nil {
 		return nil, err
@@ -124,9 +135,6 @@ func (f *files) recovery() error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		if info.IsDir() {
-			return nil
-		}
 		if strings.HasSuffix(info.Name(), filesWalExtTmp) {
 			_ = os.Remove(path)
 		}
@@ -154,7 +162,6 @@ func (f *files) recovery() error {
 	}
 	err = f.wal.read(func(e *entry) error {
 		f.EntryID = e.ID
-		fmt.Println(e.ID, string(e.data), e.name)
 		switch e.name {
 		case appendSegmentType:
 			var appendS appendSegment
@@ -196,7 +203,7 @@ func (f *files) recovery() error {
 		return nil
 	})
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 	if len(f.SegmentFiles) > 0 {
 		sortIntFilename(f.SegmentFiles)
@@ -322,7 +329,7 @@ func (f *files) appendSegment(appendS appendSegment) error {
 	filename := filepath.Base(appendS.Filename)
 	for _, file := range f.SegmentFiles {
 		if file == filename {
-			return fmt.Errorf("segment filename repeated")
+			return errors.Errorf("segment filename repeated")
 		}
 	}
 	f.SegmentFiles = append(f.SegmentFiles, filename)
@@ -419,7 +426,11 @@ func (f *files) notifySnapshot() {
 }
 
 func (f *files) close() {
+	f.l.Lock()
+	defer f.l.Unlock()
+	_ = f.wal.close()
 	close(f.c)
+	<-f.s
 }
 
 func (f *files) start() {
@@ -427,6 +438,7 @@ func (f *files) start() {
 		for {
 			select {
 			case <-f.c:
+				close(f.s)
 				return
 			case <-f.notifyS:
 				f.makeSnapshot()
