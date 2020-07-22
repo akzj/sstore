@@ -68,7 +68,7 @@ func (opt Options) WithWalPath(val string) Options {
 }
 
 //WithMaxSegmentCount
-func (opt Options) WithMaxSegmentCount(val int64) Options {
+func (opt Options) WithMaxSegmentCount(val int) Options {
 	opt.MaxSegmentCount = val
 	return opt
 }
