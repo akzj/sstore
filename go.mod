@@ -1,4 +1,4 @@
-module sstore
+module github.com/serviceflow/sstore
 
 go 1.13
 
