@@ -159,15 +159,20 @@ func (c *committer) start() {
 		for {
 			entries := c.queue.take()
 			for i := range entries {
-				entry := entries[i]
-				mStream, end := c.mutableMStreamMap.appendEntry(entry)
+				e := entries[i]
+				if e.ID == closeID {
+					c.callbackQueue.put(e)
+					c.flusher.close()
+					return
+				}
+				mStream, end := c.mutableMStreamMap.appendEntry(e)
 				if mStream != nil {
 					c.indexTable.commit(func() {
 						c.indexTable.update(mStream)
 					})
 				}
-				item := notifyItemPool.Get().(*notifyItem)
-				item.name = entry.name
+				item := notifyItemPool.Get().(*notify)
+				item.name = e.name
 				item.end = end
 				c.endWatchers.notify(item)
 				if c.mutableMStreamMap.mSize >= c.maxMStreamTableSize {
@@ -193,6 +198,9 @@ func (worker *callbackWorker) start() {
 			entries := worker.queue.take()
 			for index := range entries {
 				e := entries[index]
+				if e.ID == closeID {
+					return
+				}
 				e.cb(nil)
 			}
 		}

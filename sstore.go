@@ -122,3 +122,11 @@ func (sstore *SStore) Exist(name string) bool {
 	_, ok := sstore.Begin(name)
 	return ok
 }
+
+//Close sstore
+func (sstore *SStore) Close() error {
+	sstore.wWriter.close()
+	sstore.files.close()
+	sstore.endWatchers.close()
+	return nil
+}

@@ -69,6 +69,8 @@ func (worker *wWriter) createNewWal() error {
 	return nil
 }
 
+const closeID = -1
+
 func (worker *wWriter) start() {
 	go func() {
 		for {
@@ -76,6 +78,11 @@ func (worker *wWriter) start() {
 			entries := worker.queue.take()
 			for i := range entries {
 				e := entries[i]
+				if e.ID == closeID {
+					_ = worker.wal.close()
+					worker.commit.put(e)
+					return
+				}
 				if worker.wal.fileSize() > worker.maxWalSize {
 					if err := worker.createNewWal(); err != nil {
 						e.cb(err)
@@ -90,7 +97,6 @@ func (worker *wWriter) start() {
 			}
 			entriesPool.Put(entries)
 			if len(commit) > 0 {
-				log.Println("wal flush")
 				if err := worker.wal.flush(); err != nil {
 					log.Fatal(err.Error())
 				}
@@ -98,4 +104,13 @@ func (worker *wWriter) start() {
 			}
 		}
 	}()
+}
+
+func (worker *wWriter) close() {
+	worker.queue.put(&entry{
+		ID:   closeID,
+		name: "",
+		data: nil,
+		cb:   nil,
+	})
 }

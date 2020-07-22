@@ -16,12 +16,14 @@ package sstore
 type flusher struct {
 	items chan func()
 	files *files
+	c     chan interface{}
 }
 
 func newFlusher(files *files) *flusher {
 	return &flusher{
 		items: make(chan func(), 1),
 		files: files,
+		c:     make(chan interface{}),
 	}
 }
 
@@ -45,11 +47,16 @@ func (flusher *flusher) flushMStreamTable(table *mStreamTable) (string, error) {
 	}
 	return filename, nil
 }
+func (flusher *flusher) close() {
+	close(flusher.c)
+}
 
 func (flusher *flusher) start() {
 	go func() {
 		for {
 			select {
+			case <-flusher.c:
+				return
 			case f := <-flusher.items:
 				f()
 			}
