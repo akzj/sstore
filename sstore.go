@@ -38,7 +38,6 @@ func Open(options Options) (*SStore, error) {
 	var sstore = &SStore{
 		options:    options,
 		entryQueue: newEntryQueue(options.EntryQueueCap),
-		entryID:    0,
 		notifyPool: sync.Pool{
 			New: func() interface{} {
 				return make(chan interface{}, 1)
@@ -46,7 +45,6 @@ func Open(options Options) (*SStore, error) {
 		},
 		segments:    make(map[string]*segment),
 		endMap:      newInt64LockMap(),
-		committer:   nil,
 		indexTable:  newIndexTable(),
 		endWatchers: newEndWatchers(),
 	}

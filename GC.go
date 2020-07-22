@@ -20,8 +20,8 @@ import (
 )
 
 // GC will delete wal,segment
-// delete useless wal
-// delete last segment
+// delete wal
+// delete segment
 func (sstore *SStore) gcWal() error {
 	walFiles := sstore.files.getWalFiles()
 	segmentFiles := sstore.files.getSegmentFiles()
