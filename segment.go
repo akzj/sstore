@@ -48,6 +48,7 @@ type segment struct {
 	f        *os.File
 	meta     *segmentMeta
 	l        *sync.RWMutex
+	delete   bool
 }
 
 func createSegment(filename string) (*segment, error) {
@@ -173,6 +174,16 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 	return nil
 }
 
+func (s *segment) deleteOnClose(delete bool) error {
+	s.l.Lock()
+	defer s.l.Unlock()
+	if s.f == nil {
+		return errors.Errorf("segment is close")
+	}
+	s.delete = delete
+	return nil
+}
+
 func (s *segment) close() error {
 	s.l.Lock()
 	defer s.l.Unlock()
@@ -181,6 +192,11 @@ func (s *segment) close() error {
 	}
 	if err := s.f.Close(); err != nil {
 		return err
+	}
+	if s.delete {
+		if err := os.Remove(s.filename);err != nil{
+			return errors.WithStack(err)
+		}
 	}
 	s.f = nil
 	return nil

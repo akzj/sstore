@@ -23,7 +23,7 @@ type Options struct {
 	FilesDir                      string `json:"files_dir"`
 	WalDir                        string `json:"wal_dir"`
 	SegmentDir                    string `json:"segment_dir"`
-	MaxSegmentCount               int64  `json:"max_segment_count"`
+	MaxSegmentCount               int    `json:"max_segment_count"`
 	BlockSize                     int64  `json:"block_size"`
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
 	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
@@ -40,7 +40,7 @@ func DefaultOptions(Path string) Options {
 		FilesDir:                      filepath.Join(Path, "files"),
 		WalDir:                        filepath.Join(Path, "wals"),
 		SegmentDir:                    filepath.Join(Path, "segments"),
-		MaxSegmentCount:               math.MaxInt64,
+		MaxSegmentCount:               math.MaxInt32,
 		BlockSize:                     4 * KB,
 		MaxMStreamTableSize:           256 * MB,
 		MaxImmutableMStreamTableCount: 4,

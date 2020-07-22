@@ -60,8 +60,32 @@ func (sstore *SStore) gcWal() error {
 	return nil
 }
 
+func (sstore *SStore) gcSegment() error {
+	segmentFiles := sstore.files.getSegmentFiles()
+	if len(segmentFiles) <= sstore.options.MaxSegmentCount {
+		return nil
+	}
+	var deleteFiles = segmentFiles[:sstore.options.MaxSegmentCount-len(segmentFiles)]
+	for _, filename := range deleteFiles {
+		segment := sstore.committer.getSegment(filename)
+		if segment == nil {
+			return errors.Errorf("no find segment[%s]", segment)
+		}
+		if err := segment.deleteOnClose(true); err != nil {
+			return err
+		}
+		if err := sstore.committer.deleteSegment(filename); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (sstore *SStore) GC() error {
 	if err := sstore.gcWal(); err != nil {
+		return err
+	}
+	if err := sstore.gcSegment(); err != nil {
 		return err
 	}
 	return nil

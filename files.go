@@ -273,6 +273,7 @@ func (f *files) appendWal(appendW appendWal) error {
 		}
 	}
 	f.WalFiles = append(f.WalFiles, filename)
+	sortIntFilename(f.WalFiles)
 	if f.inRecovery {
 		return nil
 	}
@@ -290,6 +291,7 @@ func (f *files) appendSegment(appendS appendSegment) error {
 		}
 	}
 	f.SegmentFiles = append(f.SegmentFiles, filename)
+	sortIntFilename(f.SegmentFiles)
 	if f.inRecovery {
 		return nil
 	}
