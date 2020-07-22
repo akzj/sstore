@@ -47,17 +47,17 @@ func (index *offsetIndex) find(offset int64) (offsetItem, error) {
 	return offsetIndexNoFind, errNoFindOffsetIndex
 }
 
-func (index *offsetIndex) update(item offsetItem) {
+func (index *offsetIndex) update(item offsetItem) error {
 	index.l.Lock()
 	defer index.l.Unlock()
 	if len(index.items) == 0 {
 		index.items = append(index.items, item)
-		return
+		return nil
 	}
 	if index.items[len(index.items)-1].begin < item.begin {
 		index.items[len(index.items)-1].end = item.begin
 		index.items = append(index.items, item)
-		return
+		return nil
 	}
 	i := sort.Search(len(index.items), func(i int) bool {
 		return index.items[i].begin >= item.begin
@@ -73,8 +73,10 @@ func (index *offsetIndex) update(item offsetItem) {
 		if item.mStream != nil {
 			index.items[i].mStream = item.mStream
 		}
+		return nil
 	} else {
-		panic("index update error")
+		return errors.Errorf("update index error begin[%d] end[%d]",
+			item.begin, item.end)
 	}
 }
 func (index *offsetIndex) begin() (int64, bool) {
@@ -172,7 +174,7 @@ func (index *indexTable) loadOrCreate(name string, item offsetItem) (*offsetInde
 	return offsetIndex, false
 }
 
-func (index *indexTable) update1(segment *segment) {
+func (index *indexTable) update1(segment *segment) error {
 	for _, it := range segment.meta.OffSetInfos {
 		segment.refInc()
 		item := offsetItem{
@@ -183,9 +185,12 @@ func (index *indexTable) update1(segment *segment) {
 		}
 		offsetIndex, load := index.loadOrCreate(it.Name, item)
 		if load {
-			offsetIndex.update(item)
+			if err := offsetIndex.update(item); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 func (index *indexTable) remove1(segment *segment) error {

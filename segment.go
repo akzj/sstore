@@ -152,9 +152,9 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 		index := offsetInfo{
 			Name:   name,
 			Offset: Offset,
-			End:    int64(n),
 			CRC:    hash.Sum32(),
 			Begin:  mStream.begin,
+			End:    mStream.begin + int64(n),
 		}
 		Offset += int64(n)
 		s.meta.OffSetInfos[name] = index
@@ -194,7 +194,7 @@ func (s *segment) close() error {
 		return err
 	}
 	if s.delete {
-		if err := os.Remove(s.filename);err != nil{
+		if err := os.Remove(s.filename); err != nil {
 			return errors.WithStack(err)
 		}
 	}

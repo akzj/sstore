@@ -18,16 +18,17 @@ import (
 	"github.com/pkg/errors"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 const version1 = "ver1"
 
 type walHeader struct {
-	Filename     string `json:"F"`
-	Version      string `json:"V"`
-	FirstEntryID int64  `json:"F"`
-	LastEntryID  int64  `json:"L"`
-	Old          bool   `json:"O"`
+	Old          bool   `json:"old"`
+	Filename     string `json:"filename"`
+	Version      string `json:"version"`
+	FirstEntryID int64  `json:"first_entry_id"`
+	LastEntryID  int64  `json:"last_entry_id"`
 }
 
 // write ahead log
@@ -53,7 +54,7 @@ func openWal(filename string) (*wal, error) {
 		f:        f,
 		writer:   bufio.NewWriterSize(f, 4*1024*1024),
 		header: walHeader{
-			Filename:     filename,
+			Filename:     filepath.Base(filename),
 			Version:      version1,
 			FirstEntryID: -1,
 			LastEntryID:  -1,
@@ -133,7 +134,7 @@ func (wal *wal) read(cb func(e *entry) error) error {
 			if err == io.EOF {
 				return nil
 			}
-			return errors.WithStack(err)
+			return err
 		}
 		if err := cb(e); err != nil {
 			return err

@@ -63,6 +63,11 @@ func reload(sStore *SStore) error {
 		sStore.options.BlockSize)
 	sStore.committer = committer
 
+	sStore.committer.start()
+	sStore.indexTable.start()
+	sStore.files.start()
+	sStore.endWatchers.start()
+
 	segmentFiles := files.getSegmentFiles()
 	for _, file := range segmentFiles {
 		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
@@ -78,18 +83,18 @@ func reload(sStore *SStore) error {
 		}
 		sStore.entryID = segment.meta.LastEntryID
 		sStore.segments[file] = segment
-		sStore.indexTable.update1(segment)
+		if err := sStore.indexTable.update1(segment); err != nil {
+			return err
+		}
 	}
-
 	walFiles := files.getWalFiles()
-	for _, file := range walFiles {
-		wal, err := openWal(filepath.Join(sStore.options.WalDir, file))
+	for _, filename := range walFiles {
+		wal, err := openWal(filepath.Join(sStore.options.WalDir, filename))
 		if err != nil {
 			return err
 		}
-
 		//skip
-		if walHeader, err := files.getWalHeader(file); err == nil {
+		if walHeader, err := files.getWalHeader(filename); err == nil {
 			if walHeader.Old && walHeader.LastEntryID <= sStore.entryID {
 				continue
 			}
@@ -98,18 +103,15 @@ func reload(sStore *SStore) error {
 			return err
 		}
 		if err := wal.read(func(e *entry) error {
-			fmt.Println(e.ID)
 			if e.ID <= sStore.entryID {
-				//skip
-				return nil
+				return nil //skip
 			} else if e.ID == sStore.entryID+1 {
+				sStore.entryID++
 				end1, _ := sStore.endMap.get(e.name)
 				committer := sStore.committer
 				mStream, end2 := committer.mutableMStreamMap.appendEntry(e)
 				if mStream != nil {
-					committer.indexTable.commit(func() {
-						committer.indexTable.update(mStream)
-					})
+					committer.indexTable.update(mStream)
 				}
 				if committer.mutableMStreamMap.mSize >= committer.maxMStreamTableSize {
 					committer.flush()
@@ -119,7 +121,8 @@ func reload(sStore *SStore) error {
 				}
 				return nil
 			} else {
-				return errors.WithStack(ErrWal)
+				return errors.WithMessage(ErrWal,
+					fmt.Sprintf("e.ID[%d] sStore.entryID+1[%d] %s", e.ID, sStore.entryID+1, filename))
 			}
 		}); err != nil {
 			_ = wal.close()
@@ -147,6 +150,7 @@ func reload(sStore *SStore) error {
 	}
 	sStore.wWriter = newWWriter(w, sStore.entryQueue,
 		sStore.committer.queue, sStore.files, sStore.options.MaxWalSize)
+	sStore.wWriter.start()
 
 	walFiles = files.getWalFiles()
 	//clear dead wal
@@ -162,11 +166,12 @@ func reload(sStore *SStore) error {
 	}
 
 	//clear dead segment files
-	segmentAllFiles, err := listDir(sStore.options.SegmentDir, segmentExt)
+	segmentFileAll, err := listDir(sStore.options.SegmentDir, segmentExt)
 	if err != nil {
 		return err
 	}
-	for _, filename := range diffStrings(segmentAllFiles, segmentFiles) {
+	segmentFiles = files.getSegmentFiles()
+	for _, filename := range diffStrings(segmentFileAll, segmentFiles) {
 		if err := os.Remove(filepath.Join(sStore.options.SegmentDir, filename)); err != nil {
 			return errors.WithStack(err)
 		}
