@@ -419,6 +419,9 @@ func (f *files) notifySnapshot() {
 }
 
 func (f *files) close() {
+	f.l.Lock()
+	defer f.l.Unlock()
+	_ = f.wal.close()
 	close(f.c)
 }
 
