@@ -60,6 +60,11 @@ func (worker *wWriter) createNewWal() error {
 	if err := worker.wal.close(); err != nil {
 		return err
 	}
+	header := worker.wal.getHeader()
+	header.Old = true
+	if err := worker.files.setWalHeader(header); err != nil {
+		return err
+	}
 	worker.wal = wal
 	return nil
 }

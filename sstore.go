@@ -49,7 +49,7 @@ func Open(options Options) (*SStore, error) {
 		endWatchers: newEndWatchers(),
 	}
 
-	if err := recover(sstore); err != nil {
+	if err := reload(sstore); err != nil {
 		return nil, err
 	}
 	sstore.committer.start()

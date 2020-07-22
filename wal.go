@@ -21,9 +21,9 @@ import (
 )
 
 const version1 = "ver1"
-const maxHeaderSize = 1024
 
 type walHeader struct {
+	Filename     string `json:"F"`
 	Version      string `json:"V"`
 	FirstEntryID int64  `json:"F"`
 	LastEntryID  int64  `json:"L"`
@@ -53,9 +53,11 @@ func openWal(filename string) (*wal, error) {
 		f:        f,
 		writer:   bufio.NewWriterSize(f, 4*1024*1024),
 		header: walHeader{
+			Filename:     filename,
 			Version:      version1,
 			FirstEntryID: -1,
 			LastEntryID:  -1,
+			Old:          false,
 		},
 	}
 	return w, nil

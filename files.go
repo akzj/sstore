@@ -27,14 +27,22 @@ import (
 	"sync/atomic"
 )
 
-type deleteWal struct {
+type appendWal struct {
 	Filename string `json:"filename"`
 }
-type appendWal struct {
+type deleteWal struct {
 	Filename string `json:"filename"`
 }
 
 type appendSegment struct {
+	Filename string `json:"filename"`
+}
+
+type deleteSegment struct {
+	Filename string `json:"filename"`
+}
+
+type delWalHeader struct {
 	Filename string `json:"filename"`
 }
 
@@ -50,22 +58,28 @@ type files struct {
 	filesWalIndex int64
 	inRecovery    bool
 
-	EntryID      int64    `json:"entry_id"`
-	SegmentFiles []string `json:"segment_files"`
-	WalFiles     []string `json:"wal_files"`
+	EntryID      int64                `json:"entry_id"`
+	SegmentFiles []string             `json:"segment_files"`
+	WalFiles     []string             `json:"wal_files"`
+	WalHeaderMap map[string]walHeader `json:"wal_header_map"`
 
 	notifyS chan interface{}
 }
 
 const (
-	appendSegmentType = "appendSegment"
+	appendSegmentType = "appendSegment" //append segment
+	deleteSegmentType = "deleteSegment"
 	appendWalType     = "appendWal"
 	deleteWalType     = "deleteWal"
+	setWalHeaderType  = "setWalHeader" //set wal header
+	delWalHeaderType  = "delWalHeader" //set wal header
+
 	filesSnapshotType = "filesSnapshot"
-	segmentExt        = ".seg"
-	WalExt            = ".log"
-	filesWalExt       = ".files"
-	filesWalExtTmp    = ".files.tmp"
+
+	segmentExt     = ".seg"
+	WalExt         = ".log"
+	filesWalExt    = ".files"
+	filesWalExtTmp = ".files.tmp"
 )
 
 func openFiles(filesDir string, segmentDir string, walDir string) (*files, error) {
@@ -146,24 +160,42 @@ func (f *files) recovery() error {
 	}
 	err = f.wal.read(func(e *entry) error {
 		f.EntryID = e.ID
-		fmt.Println(e.ID,string(e.data),e.name)
+		fmt.Println(e.ID, string(e.data), e.name)
 		switch e.name {
 		case appendSegmentType:
-			var request appendSegment
-			if err := json.Unmarshal(e.data, &request); err != nil {
+			var appendS appendSegment
+			if err := json.Unmarshal(e.data, &appendS); err != nil {
 				return errors.WithStack(err)
 			}
-			return f.appendSegment(request)
+			return f.appendSegment(appendS)
+		case deleteSegmentType:
+			var deleteS deleteSegment
+			if err := json.Unmarshal(e.data, &deleteS); err != nil {
+				return errors.WithStack(err)
+			}
+			return f.deleteSegment(deleteS)
 		case appendWalType:
 			var appendW appendWal
 			if err := json.Unmarshal(e.data, &appendW); err != nil {
 				return errors.WithStack(err)
 			}
 			return f.appendWal(appendW)
+		case deleteWalType:
+			var deleteW deleteWal
+			if err := json.Unmarshal(e.data, &deleteW); err != nil {
+				return errors.WithStack(err)
+			}
+			return f.deleteWal(deleteW)
 		case filesSnapshotType:
 			if err := json.Unmarshal(e.data, f); err != nil {
 				return errors.WithStack(err)
 			}
+		case setWalHeaderType:
+			var header walHeader
+			if err := json.Unmarshal(e.data, &header); err != nil {
+				return errors.WithStack(err)
+			}
+			return f.setWalHeader(header)
 		default:
 			log.Fatalf("unknown type %s", e.name)
 		}
@@ -249,6 +281,24 @@ func (f *files) makeSnapshot() {
 	}
 }
 
+func (f *files) appendWal(appendW appendWal) error {
+	f.l.Lock()
+	defer f.l.Unlock()
+	filename := filepath.Base(appendW.Filename)
+	for _, file := range f.WalFiles {
+		if file == filename {
+			return errors.Errorf("wal filename repeated")
+		}
+	}
+	f.WalFiles = append(f.WalFiles, filename)
+	sortIntFilename(f.WalFiles)
+	if f.inRecovery {
+		return nil
+	}
+	data, _ := json.Marshal(appendW)
+	return f.writeEntry(appendWalType, data)
+}
+
 func (f *files) deleteWal(deleteW deleteWal) error {
 	f.l.Lock()
 	defer f.l.Unlock()
@@ -272,24 +322,6 @@ func (f *files) deleteWal(deleteW deleteWal) error {
 	return f.writeEntry(deleteWalType, data)
 }
 
-func (f *files) appendWal(appendW appendWal) error {
-	f.l.Lock()
-	defer f.l.Unlock()
-	filename := filepath.Base(appendW.Filename)
-	for _, file := range f.WalFiles {
-		if file == filename {
-			return errors.Errorf("wal filename repeated")
-		}
-	}
-	f.WalFiles = append(f.WalFiles, filename)
-	sortIntFilename(f.WalFiles)
-	if f.inRecovery {
-		return nil
-	}
-	data, _ := json.Marshal(appendW)
-	return f.writeEntry(appendWalType, data)
-}
-
 func (f *files) appendSegment(appendS appendSegment) error {
 	f.l.Lock()
 	defer f.l.Unlock()
@@ -306,6 +338,65 @@ func (f *files) appendSegment(appendS appendSegment) error {
 	}
 	data, _ := json.Marshal(appendS)
 	return f.writeEntry(appendSegmentType, data)
+}
+
+func (f *files) setWalHeader(header walHeader) error {
+	f.l.Lock()
+	defer f.l.Unlock()
+	f.WalHeaderMap[filepath.Base(header.Filename)] = header
+	if f.inRecovery {
+		return nil
+	}
+	data, _ := json.Marshal(header)
+	return f.writeEntry(setWalHeaderType, data)
+}
+
+func (f *files) getWalHeader(filename string) (walHeader, error) {
+	f.l.Lock()
+	defer f.l.Unlock()
+	header, ok := f.WalHeaderMap[filename]
+	if !ok {
+		return header, errors.Errorf("no find header [%s]", filename)
+	}
+	return header, nil
+}
+
+func (f *files) delWalHeader(header delWalHeader) error {
+	f.l.Lock()
+	defer f.l.Unlock()
+	_, ok := f.WalHeaderMap[filepath.Base(header.Filename)]
+	if ok == false {
+		return errors.Errorf("no find wal [%s]", header.Filename)
+	}
+	delete(f.WalHeaderMap, filepath.Base(header.Filename))
+	if f.inRecovery {
+		return nil
+	}
+	data, _ := json.Marshal(header)
+	return f.writeEntry(delWalHeaderType, data)
+}
+
+func (f *files) deleteSegment(deleteS deleteSegment) error {
+	f.l.Lock()
+	defer f.l.Unlock()
+	filename := filepath.Base(deleteS.Filename)
+	var find = false
+	for index, file := range f.SegmentFiles {
+		if file == filename {
+			copy(f.SegmentFiles[index:], f.SegmentFiles[index+1:])
+			f.SegmentFiles = f.SegmentFiles[:len(f.SegmentFiles)-1]
+			find = true
+			break
+		}
+	}
+	if find == false {
+		return errors.Errorf("no find segment [%s]", filename)
+	}
+	if f.inRecovery {
+		return nil
+	}
+	data, _ := json.Marshal(deleteS)
+	return f.writeEntry(deleteSegmentType, data)
 }
 
 func (f *files) writeEntry(typ string, data []byte, ) error {
