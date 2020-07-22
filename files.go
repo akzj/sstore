@@ -64,6 +64,7 @@ type files struct {
 	WalHeaderMap map[string]walHeader `json:"wal_header_map"`
 
 	notifyS chan interface{}
+	c       chan interface{}
 }
 
 const (
@@ -84,19 +85,12 @@ const (
 
 func openFiles(filesDir string, segmentDir string, walDir string) (*files, error) {
 	files := &files{
-		maxWalSize:    128 * 1024 * 1024,
-		l:             sync.RWMutex{},
-		segmentDir:    segmentDir,
-		filesDir:      filesDir,
-		walDir:        walDir,
-		segmentIndex:  0,
-		walIndex:      0,
-		filesWalIndex: 0,
-		inRecovery:    false,
-		EntryID:       0,
-		SegmentFiles:  nil,
-		WalFiles:      nil,
-		notifyS:       make(chan interface{}),
+		maxWalSize: 128 * 1024 * 1024,
+		segmentDir: segmentDir,
+		filesDir:   filesDir,
+		walDir:     walDir,
+		notifyS:    make(chan interface{}, 1),
+		c:          make(chan interface{}),
 	}
 	if err := files.recovery(); err != nil {
 		return nil, err
@@ -424,10 +418,16 @@ func (f *files) notifySnapshot() {
 	}
 }
 
+func (f *files) close() {
+	close(f.c)
+}
+
 func (f *files) start() {
 	go func() {
 		for {
 			select {
+			case <-f.c:
+				return
 			case <-f.notifyS:
 				f.makeSnapshot()
 			}

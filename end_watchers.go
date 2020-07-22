@@ -1,6 +1,9 @@
 package sstore
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 type endWatcher struct {
 	index  int64
@@ -8,7 +11,7 @@ type endWatcher struct {
 	int64s chan int64
 }
 
-type notifyItem struct {
+type notify struct {
 	name string
 	end  int64
 }
@@ -20,11 +23,12 @@ type endWatchers struct {
 
 	l           *sync.Mutex
 	cond        *sync.Cond
-	notifyItems []*notifyItem
+	notifyItems []*notify
+	isClose     int32
 }
 
 var notifyItemPool = sync.Pool{New: func() interface{} {
-	return new(notifyItem)
+	return new(notify)
 }}
 
 func newEndWatchers() *endWatchers {
@@ -34,7 +38,7 @@ func newEndWatchers() *endWatchers {
 		l:              l,
 		cond:           sync.NewCond(l),
 		endWatcherLock: new(sync.RWMutex),
-		notifyItems:    make([]*notifyItem, 1024),
+		notifyItems:    make([]*notify, 1024),
 		endWatcherMap:  make(map[string][]endWatcher),
 	}
 }
@@ -79,7 +83,7 @@ func (endWatchers *endWatchers) getEndWatcher(name string) []endWatcher {
 	return watcher
 }
 
-func (endWatchers *endWatchers) take(buf []*notifyItem) []*notifyItem {
+func (endWatchers *endWatchers) take(buf []*notify) []*notify {
 	endWatchers.l.Lock()
 	defer endWatchers.l.Unlock()
 	for len(endWatchers.notifyItems) == 0 {
@@ -92,19 +96,32 @@ func (endWatchers *endWatchers) take(buf []*notifyItem) []*notifyItem {
 
 func (endWatchers *endWatchers) start() {
 	go func() {
-		var buf = make([]*notifyItem, 128)
+		var buf = make([]*notify, 128)
 		for {
-			for _, item := range endWatchers.take(buf) {
+			items := endWatchers.take(buf)
+			if atomic.LoadInt32(&endWatchers.isClose) == 1 {
+				return
+			}
+			for _, item := range items {
 				for _, watcher := range endWatchers.getEndWatcher(item.name) {
 					watcher.notify(item.end)
 				}
 				notifyItemPool.Put(item)
 			}
+			buf = items
 		}
 	}()
 }
 
-func (endWatchers *endWatchers) notify(item *notifyItem) {
+func (endWatchers *endWatchers) close() {
+	atomic.StoreInt32(&endWatchers.isClose, 1)
+	endWatchers.notify(&notify{
+		name: "",
+		end:  0,
+	})
+}
+
+func (endWatchers *endWatchers) notify(item *notify) {
 	endWatchers.l.Lock()
 	endWatchers.notifyItems = append(endWatchers.notifyItems, item)
 	endWatchers.l.Unlock()

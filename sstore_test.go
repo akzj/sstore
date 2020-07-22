@@ -24,6 +24,7 @@ func TestOpen(t *testing.T) {
 	if len("hello world") != int(pos) {
 		t.Fatal(pos)
 	}
+	_ = sstore.Close()
 }
 
 func TestRecover(t *testing.T) {
