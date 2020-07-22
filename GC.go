@@ -31,7 +31,7 @@ func (sstore *SStore) gcWal() error {
 	last := segmentFiles[len(segmentFiles)-1]
 	segment := sstore.committer.getSegment(last)
 	if segment == nil {
-		return errors.Errorf("no find segment [%d]", last)
+		return errors.Errorf("no find segment [%s]", last)
 	}
 	LastEntryID := segment.lastEntryID()
 	skip := sstore.wWriter.walFilename()
@@ -69,7 +69,7 @@ func (sstore *SStore) gcSegment() error {
 	for _, filename := range deleteFiles {
 		segment := sstore.committer.getSegment(filename)
 		if segment == nil {
-			return errors.Errorf("no find segment[%s]", segment)
+			return errors.Errorf("no find segment[%s]", filename)
 		}
 		if err := segment.deleteOnClose(true); err != nil {
 			return err

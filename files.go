@@ -68,10 +68,9 @@ const (
 	filesWalExtTmp    = ".files.tmp"
 )
 
-func openFiles(filesDir string, segmentDir string, walDir string) *files {
-	return &files{
+func openFiles(filesDir string, segmentDir string, walDir string) (*files, error) {
+	files := &files{
 		maxWalSize:    128 * 1024 * 1024,
-		wal:           nil,
 		l:             sync.RWMutex{},
 		segmentDir:    segmentDir,
 		filesDir:      filesDir,
@@ -85,7 +84,12 @@ func openFiles(filesDir string, segmentDir string, walDir string) *files {
 		WalFiles:      nil,
 		notifyS:       make(chan interface{}),
 	}
+	if err := files.recovery(); err != nil {
+		return nil, err
+	}
+	return files, nil
 }
+
 func copyStrings(strings []string) []string {
 	return append(make([]string, 0, len(strings)), strings...)
 }
@@ -127,19 +131,22 @@ func (f *files) recovery() error {
 		return errors.WithStack(err)
 	}
 
+	sortIntFilename(walFiles)
 	if len(walFiles) == 0 {
 		f.filesWalIndex = 1
 		f.wal, err = openWal(filepath.Join(f.filesDir, "1"+filesWalExt))
 	} else {
-		sortIntFilename(walFiles)
 		f.wal, err = openWal(walFiles[len(walFiles)-1])
 		if err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 	}
-
+	if err := f.wal.seekStart(); err != nil {
+		return err
+	}
 	err = f.wal.read(func(e *entry) error {
 		f.EntryID = e.ID
+		fmt.Println(e.ID,string(e.data),e.name)
 		switch e.name {
 		case appendSegmentType:
 			var request appendSegment
@@ -157,6 +164,8 @@ func (f *files) recovery() error {
 			if err := json.Unmarshal(e.data, f); err != nil {
 				return errors.WithStack(err)
 			}
+		default:
+			log.Fatalf("unknown type %s", e.name)
 		}
 		return nil
 	})
@@ -199,7 +208,7 @@ func (f *files) makeSnapshot() {
 	f.EntryID++
 	tmpWal := strconv.FormatInt(f.filesWalIndex, 10) + filesWalExtTmp
 	tmpWal = filepath.Join(f.filesDir, tmpWal)
-	wal, err := createWal(tmpWal)
+	wal, err := openWal(tmpWal)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -269,7 +278,7 @@ func (f *files) appendWal(appendW appendWal) error {
 	filename := filepath.Base(appendW.Filename)
 	for _, file := range f.WalFiles {
 		if file == filename {
-			return fmt.Errorf("wal filename repeated")
+			return errors.Errorf("wal filename repeated")
 		}
 	}
 	f.WalFiles = append(f.WalFiles, filename)
@@ -306,10 +315,10 @@ func (f *files) writeEntry(typ string, data []byte, ) error {
 		name: typ,
 		data: data,
 	}); err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 	if err := f.wal.flush(); err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 	if f.wal.fileSize() > f.maxWalSize {
 		f.notifySnapshot()

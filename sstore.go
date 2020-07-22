@@ -55,6 +55,7 @@ func Open(options Options) (*SStore, error) {
 	sstore.committer.start()
 	sstore.wWriter.start()
 	sstore.indexTable.start()
+	sstore.files.start()
 	return sstore, nil
 }
 

@@ -13,6 +13,7 @@
 package sstore
 
 import (
+	"fmt"
 	"github.com/pkg/errors"
 	"os"
 	"path/filepath"
@@ -41,9 +42,12 @@ func recover(sStore *SStore) error {
 			return err
 		}
 	}
-	files := openFiles(sStore.options.FilesDir,
+	files, err := openFiles(sStore.options.FilesDir,
 		sStore.options.SegmentDir,
 		sStore.options.WalDir)
+	if err != nil {
+		return err
+	}
 	sStore.files = files
 
 	mStreamTable := newMStreamTable(sStore.endMap, sStore.options.BlockSize, 128)
@@ -63,7 +67,7 @@ func recover(sStore *SStore) error {
 	for _, file := range segmentFiles {
 		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
 		if err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 		for _, info := range segment.meta.OffSetInfos {
 			sStore.endMap.set(info.Name, info.End)
@@ -83,12 +87,18 @@ func recover(sStore *SStore) error {
 		if err != nil {
 			return err
 		}
-		walHeader := wal.getHeader()
+
 		//skip
-		if walHeader.Old && walHeader.LastEntryID <= sStore.entryID {
-			continue
+		/*
+			walHeader := wal.getHeader()
+			if walHeader.Old && walHeader.LastEntryID <= sStore.entryID {
+				continue
+			}*/
+		if err := wal.seekStart(); err != nil {
+			return err
 		}
 		if err := wal.read(func(e *entry) error {
+			fmt.Println(e.ID)
 			if e.ID <= sStore.entryID {
 				//skip
 				return nil
@@ -120,27 +130,25 @@ func recover(sStore *SStore) error {
 		}
 	}
 	var w *wal
-	var err error
 	if len(walFiles) > 0 {
-		last := walFiles[len(walFiles)-1]
-		w, err = openWal(filepath.Join(sStore.options.WalDir, last))
+		w, err = openWal(filepath.Join(sStore.options.WalDir, walFiles[len(walFiles)-1]))
 		if err != nil {
-			return err
-		}
-		//seek to end for append new entry
-		if err := w.seekEnd(); err != nil {
 			return err
 		}
 	} else {
 		file := files.getNextWal()
-		w, err = createWal(file)
+		w, err = openWal(file)
 		if err != nil {
-			return errors.WithStack(err)
+			return err
+		}
+		if err := files.appendWal(appendWal{Filename: file}); err != nil {
+			return err
 		}
 	}
 	sStore.wWriter = newWWriter(w, sStore.entryQueue,
 		sStore.committer.queue, sStore.files, sStore.options.MaxWalSize)
 
+	walFiles = files.getWalFiles()
 	//clear dead wal
 	walFileAll, err := listDir(sStore.options.WalDir, WalExt)
 	if err != nil {
@@ -150,6 +158,7 @@ func recover(sStore *SStore) error {
 		if err := os.Remove(filepath.Join(sStore.options.WalDir, filename)); err != nil {
 			return errors.WithStack(err)
 		}
+		fmt.Println("delete filename " + filename)
 	}
 
 	//clear dead segment files
@@ -161,6 +170,7 @@ func recover(sStore *SStore) error {
 		if err := os.Remove(filepath.Join(sStore.options.SegmentDir, filename)); err != nil {
 			return errors.WithStack(err)
 		}
+		fmt.Println("delete filename " + filename)
 	}
 	return nil
 }
@@ -172,7 +182,7 @@ func listDir(dir string, ext string) ([]string, error) {
 			return errors.WithStack(err)
 		}
 		if info.IsDir() {
-			return filepath.SkipDir
+			return nil
 		}
 		if ext != "" && strings.HasSuffix(info.Name(), ext) {
 			files = append(files, info.Name())

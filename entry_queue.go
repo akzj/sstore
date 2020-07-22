@@ -26,11 +26,10 @@ type entryQueue struct {
 func newEntryQueue(cap int) *entryQueue {
 	locker := new(sync.Mutex)
 	return &entryQueue{
-		cap:     cap,
-		locker:  locker,
-		empty:   sync.NewCond(locker),
-		full:    sync.NewCond(locker),
-		entries: make([]*entry, 64),
+		cap:    cap,
+		locker: locker,
+		empty:  sync.NewCond(locker),
+		full:   sync.NewCond(locker),
 	}
 }
 func (queue *entryQueue) take() []*entry {
@@ -40,7 +39,6 @@ func (queue *entryQueue) take() []*entry {
 	}
 	entries := queue.entries
 	queue.entries = entriesPool.Get().([]*entry)[:0]
-	queue.entries = queue.entries[:0]
 	queue.locker.Unlock()
 	queue.full.Signal()
 	return entries
@@ -52,8 +50,8 @@ func (queue *entryQueue) put(e *entry) {
 		queue.full.Wait()
 	}
 	queue.entries = append(queue.entries, e)
-	queue.empty.Signal()
 	queue.locker.Unlock()
+	queue.empty.Signal()
 }
 
 func (queue *entryQueue) putEntries(entries []*entry) {

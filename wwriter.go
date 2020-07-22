@@ -50,14 +50,11 @@ func (worker *wWriter) walFilename() string {
 
 func (worker *wWriter) createNewWal() error {
 	walFile := worker.files.getNextWal()
-	wal, err := createWal(walFile)
+	wal, err := openWal(walFile)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	if err := worker.files.appendWal(appendWal{Filename: walFile}); err != nil {
-		return err
-	}
-	if err := worker.wal.flushHeader(true); err != nil {
 		return err
 	}
 	if err := worker.wal.close(); err != nil {
@@ -88,6 +85,7 @@ func (worker *wWriter) start() {
 			}
 			entriesPool.Put(entries)
 			if len(commit) > 0 {
+				log.Println("wal flush")
 				if err := worker.wal.flush(); err != nil {
 					log.Fatal(err.Error())
 				}

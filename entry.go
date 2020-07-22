@@ -34,7 +34,7 @@ const (
 )
 
 var entriesPool = sync.Pool{New: func() interface{} {
-	return make([]*entry, 64)
+	return make([]*entry, 0, 64)
 }}
 
 func (e *entry) size() int {
@@ -97,6 +97,7 @@ func decodeEntry(reader io.Reader) (*entry, error) {
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
+	e.name = string(name)
 	if n != int(nameLen) {
 		return nil, io.ErrUnexpectedEOF
 	}
