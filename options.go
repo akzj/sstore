@@ -28,8 +28,11 @@ type Options struct {
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
 	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
 	EntryQueueCap                 int    `json:"entry_queue_cap"`
-	MaxWalSize                    int64    `json:"max_wal_size"`
+	MaxWalSize                    int64  `json:"max_wal_size"`
 }
+
+const MB = 1024 * 1024
+const KB = 1024
 
 func DefaultOptions(Path string) Options {
 	return Options{
@@ -38,29 +41,64 @@ func DefaultOptions(Path string) Options {
 		WalDir:                        filepath.Join(Path, "wals"),
 		SegmentDir:                    filepath.Join(Path, "segments"),
 		MaxSegmentCount:               math.MaxInt64,
-		BlockSize:                     4 * 1024,
-		MaxMStreamTableSize:           256 * 1024 * 1024,
+		BlockSize:                     4 * KB,
+		MaxMStreamTableSize:           256 * MB,
 		MaxImmutableMStreamTableCount: 4,
 		EntryQueueCap:                 128,
+		MaxWalSize:                    64 * MB,
 	}
 }
 
-func (opt Options) WithFilesDir(path string) Options {
-	opt.FilesDir = path
+//WithFilesDir
+func (opt Options) WithFilesDir(val string) Options {
+	opt.FilesDir = val
 	return opt
 }
 
-func (opt Options) WithSegmentDir(path string) Options {
-	opt.SegmentDir = path
+//WithSegmentDir
+func (opt Options) WithSegmentDir(val string) Options {
+	opt.SegmentDir = val
 	return opt
 }
 
-func (opt Options) WithWalPath(path string) Options {
-	opt.WalDir = path
+//WithWalPath
+func (opt Options) WithWalPath(val string) Options {
+	opt.WalDir = val
 	return opt
 }
 
-func (opt Options) WithMaxSegmentCount(MaxSegmentCount int64) Options {
-	opt.MaxSegmentCount = MaxSegmentCount
+//WithMaxSegmentCount
+func (opt Options) WithMaxSegmentCount(val int64) Options {
+	opt.MaxSegmentCount = val
+	return opt
+}
+
+//WithBlockSize
+func (opt Options) WithBlockSize(val int64) Options {
+	opt.BlockSize = val
+	return opt
+}
+
+//WithMaxMStreamTableSize
+func (opt Options) WithMaxMStreamTableSize(val int64) Options {
+	opt.MaxMStreamTableSize = val
+	return opt
+}
+
+//MaxImmutableMStreamTableCount
+func (opt Options) WithMaxImmutableMStreamTableCount(val int) Options {
+	opt.MaxImmutableMStreamTableCount = val
+	return opt
+}
+
+//WithMaxWalSize
+func (opt Options) WithMaxWalSize(val int64) Options {
+	opt.MaxWalSize = val
+	return opt
+}
+
+//EntryQueueCap
+func (opt Options) WithEntryQueueCap(val int) Options {
+	opt.EntryQueueCap = val
 	return opt
 }
