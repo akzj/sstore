@@ -30,7 +30,7 @@ func TestOpen(t *testing.T) {
 }
 
 func TestRecover(t *testing.T) {
-	_ = os.RemoveAll("data")
+	//_ = os.RemoveAll("data")
 	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(10 * MB))
 	if err != nil {
 		t.Fatal(err.Error())
@@ -52,10 +52,8 @@ func TestRecover(t *testing.T) {
 	if err := sstore.Close(); err != nil {
 		t.Errorf("%+v", err)
 	}
-}
 
-func TestRecover2(t *testing.T) {
-	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(MB))
+	sstore, err = Open(DefaultOptions("data").WithMaxMStreamTableSize(MB))
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -67,7 +65,7 @@ func TestRecover2(t *testing.T) {
 
 func TestWalHeader(t *testing.T) {
 	os.RemoveAll("data")
-	os.MkdirAll("data",0777)
+	os.MkdirAll("data", 0777)
 	wal, err := openWal("data/1.log")
 	if err != nil {
 		t.Fatalf("%+v", err)
