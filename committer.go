@@ -17,7 +17,6 @@ import (
 	"log"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
 type committer struct {
@@ -182,104 +181,4 @@ func (c *committer) start() {
 			c.callbackQueue.putEntries(entries)
 		}
 	}()
-}
-
-type cbWorker struct {
-	queue *entryQueue
-}
-
-func newCbWorker(queue *entryQueue) *cbWorker {
-	return &cbWorker{queue: queue}
-}
-
-func (worker *cbWorker) start() {
-	go func() {
-		for {
-			entries := worker.queue.take()
-			for index := range entries {
-				e := entries[index]
-				if e.ID == closeSignal {
-					e.cb(nil)
-					return
-				}
-				e.cb(nil)
-			}
-			entriesPool.Put(entries[:0])
-		}
-	}()
-}
-
-type mStreamTable struct {
-	locker      sync.Mutex
-	mSize       int64
-	lastEntryID int64
-	endMap      *int64LockMap
-	GcTS        time.Time
-	mStreams    map[string]*mStream
-	indexTable  *indexTable
-	blockSize   int64
-}
-
-func newMStreamTable(sizeMap *int64LockMap,
-	blockSize int64, mStreamMapSize int) *mStreamTable {
-	return &mStreamTable{
-		blockSize:   blockSize,
-		mSize:       0,
-		lastEntryID: 0,
-		endMap:      sizeMap,
-		locker:      sync.Mutex{},
-		mStreams:    make(map[string]*mStream, mStreamMapSize),
-	}
-}
-
-func (m *mStreamTable) loadOrCreateMStream(name string) (*mStream, bool) {
-	m.locker.Lock()
-	ms, ok := m.mStreams[name]
-	if ok {
-		m.locker.Unlock()
-		return ms, true
-	}
-	size, _ := m.endMap.get(name)
-	ms = newMStream(size, m.blockSize, name)
-	m.mStreams[name] = ms
-	m.locker.Unlock()
-	return ms, false
-}
-
-//appendEntry append entry mStream,and return the mStream if it created
-func (m *mStreamTable) appendEntry(e *entry) (*mStream, int64) {
-	ms, load := m.loadOrCreateMStream(e.name)
-	end := ms.write(e.data)
-	m.endMap.set(e.name, end)
-	m.mSize += int64(len(e.data))
-	m.lastEntryID = e.ID
-	if load {
-		return nil, end
-	}
-	return ms, end
-}
-
-type int64LockMap struct {
-	locker *sync.RWMutex
-	sizes  map[string]int64
-}
-
-func newInt64LockMap() *int64LockMap {
-	return &int64LockMap{
-		locker: new(sync.RWMutex),
-		sizes:  make(map[string]int64, 1024),
-	}
-}
-
-func (sizeMap *int64LockMap) set(name string, pos int64) {
-	sizeMap.locker.Lock()
-	sizeMap.sizes[name] = pos
-	sizeMap.locker.Unlock()
-}
-
-func (sizeMap *int64LockMap) get(name string) (int64, bool) {
-	sizeMap.locker.RLock()
-	size, ok := sizeMap.sizes[name]
-	sizeMap.locker.RUnlock()
-	return size, ok
 }
