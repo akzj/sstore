@@ -46,16 +46,16 @@ type delWalHeader struct {
 }
 
 type files struct {
-	maxWalSize    int64
-	wal           *wal
-	l             sync.RWMutex
-	segmentDir    string
-	filesDir      string
-	walDir        string
-	segmentIndex  int64
-	walIndex      int64
-	filesWalIndex int64
-	inRecovery    bool
+	maxWalSize   int64
+	wal          *wal
+	l            sync.RWMutex
+	segmentDir   string
+	filesDir     string
+	walDir       string
+	segmentIndex int64
+	walIndex     int64
+	filesIndex   int64
+	inRecovery   bool
 
 	EntryID      int64                `json:"entry_id"`
 	SegmentFiles []string             `json:"segment_files"`
@@ -85,23 +85,23 @@ const (
 
 func openFiles(filesDir string, segmentDir string, walDir string) (*files, error) {
 	files := &files{
-		maxWalSize:    128 * MB,
-		wal:           nil,
-		l:             sync.RWMutex{},
-		segmentDir:    segmentDir,
-		filesDir:      filesDir,
-		walDir:        walDir,
-		segmentIndex:  0,
-		walIndex:      0,
-		filesWalIndex: 0,
-		inRecovery:    false,
-		EntryID:       0,
-		SegmentFiles:  make([]string, 0, 128),
-		WalFiles:      make([]string, 0, 128),
-		notifyS:       make(chan interface{}, 1),
-		c:             make(chan interface{}, 1),
-		s:             make(chan interface{}, 1),
-		WalHeaderMap:  make(map[string]walHeader),
+		maxWalSize:   128 * MB,
+		wal:          nil,
+		l:            sync.RWMutex{},
+		segmentDir:   segmentDir,
+		filesDir:     filesDir,
+		walDir:       walDir,
+		segmentIndex: 0,
+		walIndex:     0,
+		filesIndex:   0,
+		inRecovery:   false,
+		EntryID:      0,
+		SegmentFiles: make([]string, 0, 128),
+		WalFiles:     make([]string, 0, 128),
+		notifyS:      make(chan interface{}, 1),
+		c:            make(chan interface{}, 1),
+		s:            make(chan interface{}, 1),
+		WalHeaderMap: make(map[string]walHeader),
 	}
 	if err := files.recovery(); err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func (f *files) recovery() error {
 	defer func() {
 		f.inRecovery = false
 	}()
-	var walFiles []string
+	var logFiles []string
 	err := filepath.Walk(f.filesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return errors.WithStack(err)
@@ -139,7 +139,7 @@ func (f *files) recovery() error {
 			_ = os.Remove(path)
 		}
 		if strings.HasSuffix(info.Name(), filesWalExt) {
-			walFiles = append(walFiles, path)
+			logFiles = append(logFiles, path)
 		}
 		return nil
 	})
@@ -147,18 +147,15 @@ func (f *files) recovery() error {
 		return errors.WithStack(err)
 	}
 
-	sortIntFilename(walFiles)
-	if len(walFiles) == 0 {
-		f.filesWalIndex = 1
+	sortIntFilename(logFiles)
+	if len(logFiles) == 0 {
+		f.filesIndex = 1
 		f.wal, err = openWal(filepath.Join(f.filesDir, "1"+filesWalExt))
 	} else {
-		f.wal, err = openWal(walFiles[len(walFiles)-1])
+		f.wal, err = openWal(logFiles[len(logFiles)-1])
 		if err != nil {
 			return err
 		}
-	}
-	if err := f.wal.seekStart(); err != nil {
-		return err
 	}
 	err = f.wal.read(func(e *entry) error {
 		f.EntryID = e.ID
@@ -212,13 +209,20 @@ func (f *files) recovery() error {
 			return errors.WithStack(err)
 		}
 	}
-	if len(walFiles) > 0 {
-		for _, filename := range walFiles[:len(walFiles)-1] {
+	if len(f.WalFiles) > 0 {
+		sortIntFilename(f.WalFiles)
+		f.walIndex, err = parseFilenameIndex(f.WalFiles[len(f.WalFiles)-1])
+		if err != nil {
+			return errors.WithStack(err)
+		}
+	}
+	if len(logFiles) > 0 {
+		for _, filename := range logFiles[:len(logFiles)-1] {
 			if err := os.Remove(filename); err != nil {
 				return errors.WithStack(err)
 			}
 		}
-		f.filesWalIndex, err = parseFilenameIndex(walFiles[len(walFiles)-1])
+		f.filesIndex, err = parseFilenameIndex(logFiles[len(logFiles)-1])
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -237,9 +241,9 @@ func (f *files) makeSnapshot() {
 	if f.wal.fileSize() < f.maxWalSize {
 		return
 	}
-	f.filesWalIndex++
+	f.filesIndex++
 	f.EntryID++
-	tmpWal := strconv.FormatInt(f.filesWalIndex, 10) + filesWalExtTmp
+	tmpWal := strconv.FormatInt(f.filesIndex, 10) + filesWalExtTmp
 	tmpWal = filepath.Join(f.filesDir, tmpWal)
 	wal, err := openWal(tmpWal)
 	if err != nil {
