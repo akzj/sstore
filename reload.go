@@ -138,6 +138,9 @@ func reload(sStore *SStore) error {
 		if err != nil {
 			return err
 		}
+		if err := w.seekEnd(); err != nil {
+			return errors.WithStack(err)
+		}
 	} else {
 		file := files.getNextWal()
 		w, err = openWal(file)
