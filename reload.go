@@ -91,6 +91,7 @@ func reload(sStore *SStore) error {
 
 	//replay entries in the wal
 	walFiles := files.getWalFiles()
+	var cb = func(err error) {}
 	for _, filename := range walFiles {
 		wal, err := openWal(filepath.Join(sStore.options.WalDir, filename))
 		if err != nil {
@@ -106,6 +107,7 @@ func reload(sStore *SStore) error {
 			if e.ID <= sStore.entryID {
 				return nil //skip
 			} else if e.ID == sStore.entryID+1 {
+				e.cb = cb
 				sStore.entryID++
 				committer.queue.put(e)
 			} else {
