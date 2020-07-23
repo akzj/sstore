@@ -68,6 +68,7 @@ func reload(sStore *SStore) error {
 	sStore.files.start()
 	sStore.endWatchers.start()
 
+	//rebuild segment index
 	segmentFiles := files.getSegmentFiles()
 	for _, file := range segmentFiles {
 		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
@@ -87,6 +88,8 @@ func reload(sStore *SStore) error {
 			return err
 		}
 	}
+
+	//replay entries in the wal
 	walFiles := files.getWalFiles()
 	for _, filename := range walFiles {
 		wal, err := openWal(filepath.Join(sStore.options.WalDir, filename))
@@ -99,31 +102,17 @@ func reload(sStore *SStore) error {
 				continue
 			}
 		}
-		if err := wal.seekStart(); err != nil {
-			return err
-		}
 		if err := wal.read(func(e *entry) error {
 			if e.ID <= sStore.entryID {
 				return nil //skip
 			} else if e.ID == sStore.entryID+1 {
 				sStore.entryID++
-				end1, _ := sStore.endMap.get(e.name)
-				committer := sStore.committer
-				mStream, end2 := committer.mutableMStreamMap.appendEntry(e)
-				if mStream != nil {
-					committer.indexTable.update(mStream)
-				}
-				if committer.mutableMStreamMap.mSize >= committer.maxMStreamTableSize {
-					committer.flush()
-				}
-				if end2 != end1+int64(len(e.data)) {
-					return errors.Errorf("endMap error %d %d %d", end2, len(e.data), end2)
-				}
-				return nil
+				committer.queue.put(e)
 			} else {
 				return errors.WithMessage(ErrWal,
 					fmt.Sprintf("e.ID[%d] sStore.entryID+1[%d] %s", e.ID, sStore.entryID+1, filename))
 			}
+			return nil
 		}); err != nil {
 			_ = wal.close()
 			return err
@@ -132,11 +121,16 @@ func reload(sStore *SStore) error {
 			return err
 		}
 	}
+
+	//create wal writer
 	var w *wal
 	if len(walFiles) > 0 {
 		w, err = openWal(filepath.Join(sStore.options.WalDir, walFiles[len(walFiles)-1]))
 		if err != nil {
 			return err
+		}
+		if err := w.seekEnd(); err != nil {
+			return errors.WithStack(err)
 		}
 	} else {
 		file := files.getNextWal()
@@ -152,8 +146,8 @@ func reload(sStore *SStore) error {
 		sStore.committer.queue, sStore.files, sStore.options.MaxWalSize)
 	sStore.wWriter.start()
 
-	walFiles = files.getWalFiles()
 	//clear dead wal
+	walFiles = files.getWalFiles()
 	walFileAll, err := listDir(sStore.options.WalDir, WalExt)
 	if err != nil {
 		return err
@@ -166,11 +160,11 @@ func reload(sStore *SStore) error {
 	}
 
 	//clear dead segment files
+	segmentFiles = files.getSegmentFiles()
 	segmentFileAll, err := listDir(sStore.options.SegmentDir, segmentExt)
 	if err != nil {
 		return err
 	}
-	segmentFiles = files.getSegmentFiles()
 	for _, filename := range diffStrings(segmentFileAll, segmentFiles) {
 		if err := os.Remove(filepath.Join(sStore.options.SegmentDir, filename)); err != nil {
 			return errors.WithStack(err)
