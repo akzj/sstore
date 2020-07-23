@@ -1,6 +1,8 @@
 package sstore
 
 import (
+	"fmt"
+	"hash/crc32"
 	"os"
 	"strings"
 	"sync"
@@ -89,4 +91,60 @@ func TestWalHeader(t *testing.T) {
 	if header.Filename != "1.log" {
 		t.Fatalf(header.Filename)
 	}
+}
+
+func TestReader(t *testing.T) {
+	os.RemoveAll("data")
+	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(MB))
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	var name = "stream1"
+	var data = strings.Repeat("hello world,", 10)
+	var wg sync.WaitGroup
+
+	writer := crc32.NewIEEE()
+
+	for i := 0; i < 100000; i++ {
+		wg.Add(1)
+		d := []byte(data)
+		_, _ = writer.Write(d)
+		sstore.AsyncAppend(name, d, func(err error) {
+			if err != nil {
+				t.Fatalf("%+v", err)
+			}
+			wg.Done()
+		})
+	}
+	wg.Wait()
+
+	sum32 := writer.Sum32()
+	size, ok := sstore.End(name)
+	if ok == false {
+		t.Fatal(ok)
+	}
+
+	for _, segment := range sstore.files.getSegmentFiles() {
+		info, ok := sstore.segments[segment].meta.OffSetInfos[name]
+		if ok == false {
+			t.Fatal(segment)
+		}
+		fmt.Println(info.Begin, info.End)
+	}
+
+	var buffer = make([]byte, size)
+	n, err := sstore.ReadSeeker(name).Read(buffer)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	if n != len(buffer) {
+		t.Fatal(n)
+	}
+	reader := crc32.NewIEEE()
+	reader.Write(buffer)
+	if reader.Sum32() != sum32 {
+		t.Fatal(sum32)
+	}
+
+	sstore.Close()
 }

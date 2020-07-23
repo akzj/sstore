@@ -14,6 +14,7 @@
 package sstore
 
 import (
+	"fmt"
 	"io"
 	"math"
 	"sync"
@@ -53,6 +54,7 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, errOffSet
 	}
 	if len(m.blocks) == 0 {
+		fmt.Println("if len(m.blocks) == 0 {")
 		return 0, io.EOF
 	}
 	offset := off - m.begin
@@ -75,6 +77,7 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 		}
 	}
 	if ret == 0 {
+		fmt.Println("if ret == 0 {")
 		return 0, io.EOF
 	}
 	return ret, nil

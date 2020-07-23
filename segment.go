@@ -128,7 +128,7 @@ func (s *segment) offsetInfo(name string) (offsetInfo, error) {
 
 func (s *segment) Reader(name string) *segmentReader {
 	info, ok := s.meta.OffSetInfos[name]
-	if ok {
+	if !ok {
 		return nil
 	}
 	return &segmentReader{
@@ -158,6 +158,7 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 		}
 		Offset += int64(n)
 		s.meta.OffSetInfos[name] = index
+		mStream.end = mStream.begin + mStream.size
 	}
 	s.meta.LastEntryID = table.lastEntryID
 	s.meta.GcTS = table.GcTS
@@ -219,6 +220,10 @@ func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
 	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
 		return 0, errOffSet
 	}
+	size := s.indexInfo.End - offset
+	if int64(len(p)) > size {
+		p = p[:size]
+	}
 	offset = offset - s.indexInfo.Begin
 	return s.r.ReadAt(p, offset)
 }
@@ -249,13 +254,13 @@ func (ref *ref) refCount() int32 {
 
 func (ref *ref) refDec() int32 {
 	ref.l.Lock()
+	defer ref.l.Unlock()
 	if ref.c <= 0 {
 		panic(fmt.Errorf("ref.c %d error", ref.c))
 	}
 	ref.c -= 1
 	if ref.c == 0 {
 		ref.c = math.MinInt32
-		ref.l.Unlock()
 		go ref.f()
 		return 0
 	}
