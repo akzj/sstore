@@ -62,7 +62,7 @@ func (sstore *SStore) gcSegment() error {
 	if len(segmentFiles) <= sstore.options.MaxSegmentCount {
 		return nil
 	}
-	var deleteFiles = segmentFiles[:sstore.options.MaxSegmentCount-len(segmentFiles)]
+	var deleteFiles = segmentFiles[:len(segmentFiles)-sstore.options.MaxSegmentCount+1]
 	for _, filename := range deleteFiles {
 		segment := sstore.committer.getSegment(filename)
 		if segment == nil {
@@ -80,4 +80,3 @@ func (sstore *SStore) gcSegment() error {
 	}
 	return nil
 }
-

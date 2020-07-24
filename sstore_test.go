@@ -277,3 +277,37 @@ func TestSStore_AppendMultiStream(t *testing.T) {
 		t.Fatalf("error")
 	}
 }
+
+func TestSStore_GC(t *testing.T) {
+	os.RemoveAll("data")
+	sstore, err := Open(DefaultOptions("data").
+		WithMaxMStreamTableSize(4 * MB).
+		WithMaxSegmentCount(5))
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	var data = []byte(strings.Repeat("hello world", 10))
+	crc32Hash := crc32.NewIEEE()
+	var wg sync.WaitGroup
+	for i := 0; i < 1000; i++ {
+		_, _ = crc32Hash.Write(data)
+		for i2 := 0; i2 < 1000; i2++ {
+			wg.Add(1)
+			sstore.AsyncAppend(fmt.Sprintf("stream%d", i2), data, func(offset int64, err error) {
+				if err != nil {
+					t.Fatalf("%+v", err)
+				}
+				wg.Done()
+			})
+		}
+	}
+	wg.Wait()
+
+	if err := sstore.GC(); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	if len(sstore.files.getSegmentFiles()) == 5 {
+		t.Fatalf("")
+	}
+}

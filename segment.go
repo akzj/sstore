@@ -77,9 +77,12 @@ func openSegment(filename string) (*segment, error) {
 		return nil, err
 	}
 	segment := &segment{
+		ref:      nil,
 		filename: filename,
-		meta:     new(segmentMeta),
 		f:        f,
+		meta:     new(segmentMeta),
+		l:        new(sync.RWMutex),
+		delete:   false,
 	}
 	//seek to read meta length
 	if _, err := f.Seek(-4, io.SeekEnd); err != nil {
