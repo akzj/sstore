@@ -64,7 +64,6 @@ func reload(sStore *SStore) error {
 	sStore.committer = committer
 
 	sStore.committer.start()
-	sStore.indexTable.start()
 	sStore.files.start()
 	sStore.endWatchers.start()
 

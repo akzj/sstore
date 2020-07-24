@@ -113,32 +113,15 @@ func (index *offsetIndex) remove(item offsetItem) {
 
 type indexTable struct {
 	l            sync.RWMutex
-	commitAction chan func()
-	indexMap     map[string]*offsetIndex
 	endMap       *int64LockMap
+	indexMap     map[string]*offsetIndex
 }
 
 func newIndexTable() *indexTable {
 	return &indexTable{
 		l:            sync.RWMutex{},
 		indexMap:     map[string]*offsetIndex{},
-		commitAction: make(chan func(), 1),
 	}
-}
-
-func (index *indexTable) start() {
-	go func() {
-		for {
-			select {
-			case f := <-index.commitAction:
-				f()
-			}
-		}
-	}()
-}
-
-func (index *indexTable) commit(f func()) {
-	index.commitAction <- f
 }
 
 func (index *indexTable) removeEmptyOffsetIndex(name string) {

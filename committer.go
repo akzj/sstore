@@ -167,9 +167,7 @@ func (c *committer) start() {
 				mStream, end := c.mutableMStreamMap.appendEntry(e)
 				e.pos = end - int64(len(e.data))
 				if mStream != nil {
-					c.indexTable.commit(func() {
-						c.indexTable.update(mStream)
-					})
+					c.indexTable.update(mStream)
 				}
 				item := notifyPool.Get().(*notify)
 				item.name = e.name
