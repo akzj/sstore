@@ -124,6 +124,17 @@ func (sstore *SStore) Exist(name string) bool {
 	return ok
 }
 
+//GC will delete useless wal files,segments
+func (sstore *SStore) GC() error {
+	if err := sstore.gcWal(); err != nil {
+		return err
+	}
+	if err := sstore.gcSegment(); err != nil {
+		return err
+	}
+	return nil
+}
+
 //Close sstore
 func (sstore *SStore) Close() error {
 	if atomic.CompareAndSwapInt32(&sstore.isClose, 0, 1) == false {

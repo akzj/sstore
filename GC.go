@@ -81,12 +81,3 @@ func (sstore *SStore) gcSegment() error {
 	return nil
 }
 
-func (sstore *SStore) GC() error {
-	if err := sstore.gcWal(); err != nil {
-		return err
-	}
-	if err := sstore.gcSegment(); err != nil {
-		return err
-	}
-	return nil
-}

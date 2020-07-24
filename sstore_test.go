@@ -237,3 +237,43 @@ func TestSStore_Watcher(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 }
+
+func TestSStore_AppendMultiStream(t *testing.T) {
+	os.RemoveAll("data")
+	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(4 * MB))
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	var data = []byte(strings.Repeat("hello world", 10))
+	crc32Hash := crc32.NewIEEE()
+	var wg sync.WaitGroup
+	for i := 0; i < 1000; i++ {
+		_, _ = crc32Hash.Write(data)
+		for i2 := 0; i2 < 1000; i2++ {
+			wg.Add(1)
+			sstore.AsyncAppend(fmt.Sprintf("stream%d", i2), data, func(offset int64, err error) {
+				if err != nil {
+					t.Fatalf("%+v", err)
+				}
+				wg.Done()
+			})
+		}
+	}
+	wg.Wait()
+
+	reader, err := sstore.Reader("stream200")
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	readAll, err := ioutil.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	hash2 := crc32.NewIEEE()
+	hash2.Write(readAll)
+
+	if hash2.Sum32() != crc32Hash.Sum32() {
+		t.Fatalf("error")
+	}
+}
