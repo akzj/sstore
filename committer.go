@@ -109,25 +109,25 @@ func (c *committer) deleteSegment(filename string) error {
 	return nil
 }
 
-func (c *committer) flushCallback(filename string, table *mStreamTable) {
+func (c *committer) flushCallback(filename string, _ *mStreamTable) {
 	segment, err := openSegment(filename)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	var remove = false
+	var remove *mStreamTable
 	c.locker.Lock()
 	if len(c.immutableMStreamMaps) > c.maxImmutableMStreamTableCount {
+		remove = c.immutableMStreamMaps[0]
 		copy(c.immutableMStreamMaps[0:], c.immutableMStreamMaps[1:])
 		c.immutableMStreamMaps[len(c.immutableMStreamMaps)-1] = nil
 		c.immutableMStreamMaps = c.immutableMStreamMaps[:len(c.immutableMStreamMaps)-1]
-		remove = true
 	}
 	c.locker.Unlock()
 
 	c.appendSegment(filename, segment)
-	if remove {
-		//update indexTable
-		for _, mStream := range table.mStreams {
+	//remove from indexTable
+	if remove != nil {
+		for _, mStream := range remove.mStreams {
 			c.indexTable.remove(mStream)
 		}
 	}
