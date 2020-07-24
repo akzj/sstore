@@ -2,6 +2,7 @@ package sstore
 
 import (
 	"github.com/pkg/errors"
+	"log"
 	"sort"
 	"sync"
 )
@@ -112,15 +113,15 @@ func (index *offsetIndex) remove(item offsetItem) {
 }
 
 type indexTable struct {
-	l            sync.RWMutex
-	endMap       *int64LockMap
-	indexMap     map[string]*offsetIndex
+	l        sync.RWMutex
+	endMap   *int64LockMap
+	indexMap map[string]*offsetIndex
 }
 
 func newIndexTable() *indexTable {
 	return &indexTable{
-		l:            sync.RWMutex{},
-		indexMap:     map[string]*offsetIndex{},
+		l:        sync.RWMutex{},
+		indexMap: map[string]*offsetIndex{},
 	}
 }
 
@@ -202,7 +203,9 @@ func (index *indexTable) update(stream *mStream) {
 	}
 	offsetIndex, loaded := index.loadOrCreate(stream.name, item)
 	if loaded {
-		offsetIndex.update(item)
+		if err := offsetIndex.update(item); err != nil {
+			log.Panicf("%+v", err)
+		}
 	}
 }
 
