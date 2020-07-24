@@ -239,10 +239,10 @@ func (index *indexTable) remove(stream *mStream) {
 	}
 }
 
-func (index *indexTable) reader(name string) *reader {
+func (index *indexTable) reader(name string) (*reader, error) {
 	offsetIndex := index.get(name)
 	if offsetIndex == nil {
-		return nil
+		return nil, errors.Wrapf(ErrNoFindStream, "stream[%s]", name)
 	}
-	return newReader(name, offsetIndex, index.endMap)
+	return newReader(name, offsetIndex, index.endMap), nil
 }

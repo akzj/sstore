@@ -19,6 +19,7 @@ import (
 
 var (
 	errOffSet            = errors.New("offset error")
+	ErrNoFindStream      = errors.New("no find stream")
 	errNoFindIndexInfo   = errors.New("no find index info")
 	errNoFindOffsetIndex = errors.New("no find offset index")
 	errNoFindSegment     = errors.New("no find segment")

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestOpen(t *testing.T) {
@@ -22,7 +23,7 @@ func TestOpen(t *testing.T) {
 	if sstore.committer.mutableMStreamMap == nil {
 		t.Fatal(sstore.committer.mutableMStreamMap)
 	}
-	if err := sstore.Append("hello", []byte("hello world")); err != nil {
+	if _, err := sstore.Append("hello", []byte("hello world")); err != nil {
 		t.Fatal(err)
 	}
 	pos, ok := sstore.End("hello")
@@ -50,7 +51,7 @@ func TestRecover(t *testing.T) {
 		var wg sync.WaitGroup
 		for i := 0; i < 100000; i++ {
 			wg.Add(1)
-			sstore.AsyncAppend(name, []byte(data), func(err error) {
+			sstore.AsyncAppend(name, []byte(data), func(offset int64, err error) {
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}
@@ -110,7 +111,7 @@ func TestReader(t *testing.T) {
 		wg.Add(1)
 		d := []byte(data)
 		_, _ = writer.Write(d)
-		sstore.AsyncAppend(name, d, func(err error) {
+		sstore.AsyncAppend(name, d, func(pos int64, err error) {
 			if err != nil {
 				t.Fatalf("%+v", err)
 			}
@@ -144,29 +145,95 @@ func TestReader(t *testing.T) {
 	}
 
 	var buffer = make([]byte, size)
-	n, err := sstore.ReadSeeker(name).Read(buffer)
+	reader, err := sstore.Reader(name)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	n, err := reader.Read(buffer)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 	if n != len(buffer) {
 		t.Fatal(n)
 	}
-	reader := crc32.NewIEEE()
-	reader.Write(buffer)
-	if reader.Sum32() != sum32 {
+	crc32W := crc32.NewIEEE()
+	crc32W.Write(buffer)
+	if crc32W.Sum32() != sum32 {
 		t.Fatal(sum32)
 	}
 
-	readAllData, err := ioutil.ReadAll(sstore.ReadSeeker(name))
+	reader, _ = sstore.Reader(name)
+	readAllData, err := ioutil.ReadAll(reader)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	reader = crc32.NewIEEE()
-	reader.Write(readAllData)
-	if reader.Sum32() != sum32 {
+	crc32W = crc32.NewIEEE()
+	crc32W.Write(readAllData)
+	if crc32W.Sum32() != sum32 {
 		t.Fatal(sum32)
 	}
 
 	sstore.Close()
+}
+
+func TestSStore_Watcher(t *testing.T) {
+	os.RemoveAll("data")
+	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(MB))
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	var name = "stream1"
+	var data = "hello world"
+	if _, err := sstore.Append(name, []byte(data)); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	go func() {
+		reader, err := sstore.Reader(name)
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+		readAll, err := ioutil.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if string(readAll) != data {
+			t.Fatalf("%s %s", string(readAll), data)
+		}
+
+		readAll, err = ioutil.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if len(readAll) > 0 {
+			t.Fatalf("reader no data remain")
+		}
+
+		watcher := sstore.Watcher(name)
+		defer watcher.Close()
+
+		select {
+		case pos := <-watcher.Watch():
+			fmt.Println("pos", pos)
+		}
+
+		readAll, err = ioutil.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+		if string(readAll) != "hello world2" {
+			t.Fatalf("%s ", string(readAll))
+		}
+	}()
+
+	time.Sleep(time.Second)
+	if _, err := sstore.Append(name, []byte("hello world2")); err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	if err := sstore.Close(); err != nil {
+		t.Fatalf("%+v", err)
+	}
 }

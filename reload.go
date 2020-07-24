@@ -91,7 +91,7 @@ func reload(sStore *SStore) error {
 
 	//replay entries in the wal
 	walFiles := files.getWalFiles()
-	var cb = func(err error) {}
+	var cb = func(int64, error) {}
 	for _, filename := range walFiles {
 		wal, err := openWal(filepath.Join(sStore.options.WalDir, filename))
 		if err != nil {

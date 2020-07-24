@@ -30,7 +30,7 @@ func (worker *cbWorker) start() {
 			for index := range entries {
 				e := entries[index]
 				if e.ID == closeSignal {
-					e.cb(nil)
+					e.cb(0, nil)
 					return
 				}
 				if e == nil {
@@ -39,7 +39,7 @@ func (worker *cbWorker) start() {
 				if e.cb == nil {
 					panic(fmt.Sprintf("%d %s", e.ID, e.name))
 				}
-				e.cb(nil)
+				e.cb(e.pos, nil)
 			}
 			entriesPool.Put(entries[:0])
 		}
