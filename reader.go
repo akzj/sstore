@@ -14,6 +14,7 @@
 package sstore
 
 import (
+	"github.com/pkg/errors"
 	"io"
 )
 
@@ -72,7 +73,7 @@ func (r *reader) Read(p []byte) (n int, err error) {
 			r.offset += int64(n)
 		} else if item.segment != nil {
 			if item.segment.refInc() < 0 {
-				return ret, errOffSet
+				return ret, errors.WithStack(errOffSet)
 			}
 			n, err := item.segment.Reader(r.name).ReadAt(buf, r.offset)
 			item.segment.refDec()

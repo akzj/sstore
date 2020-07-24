@@ -33,18 +33,15 @@ func (index *offsetIndex) find(offset int64) (offsetItem, error) {
 	index.l.RLock()
 	defer index.l.RUnlock()
 	if len(index.items) == 0 {
-		return offsetIndexNoFind, errNoFindOffsetIndex
+		return offsetIndexNoFind, errors.WithStack(errNoFindOffsetIndex)
 	}
 	if index.items[len(index.items)-1].begin <= offset {
 		return index.items[len(index.items)-1], nil
 	}
 	i := sort.Search(len(index.items), func(i int) bool {
-		return index.items[i].begin >= offset
+		return index.items[i].begin > offset
 	})
-	if i < len(index.items) {
-		return index.items[i], nil
-	}
-	return offsetIndexNoFind, errNoFindOffsetIndex
+	return index.items[i-1], nil
 }
 
 func (index *offsetIndex) update(item offsetItem) error {

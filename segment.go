@@ -154,11 +154,10 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 			Offset: Offset,
 			CRC:    hash.Sum32(),
 			Begin:  mStream.begin,
-			End:    mStream.begin + int64(n),
+			End:    mStream.end,
 		}
 		Offset += int64(n)
 		s.meta.OffSetInfos[name] = index
-		mStream.end = mStream.begin + mStream.size
 	}
 	s.meta.LastEntryID = table.lastEntryID
 	s.meta.GcTS = table.GcTS
@@ -218,7 +217,9 @@ func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
 
 func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
 	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
-		return 0, errOffSet
+		return 0, errors.Wrapf(errOffSet,
+			fmt.Sprintf("offset[%d] begin[%d] end[%d]",
+				offset, s.indexInfo.Begin, s.indexInfo.End))
 	}
 	size := s.indexInfo.End - offset
 	if int64(len(p)) > size {

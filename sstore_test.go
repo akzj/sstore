@@ -3,6 +3,7 @@ package sstore
 import (
 	"fmt"
 	"hash/crc32"
+	"io/ioutil"
 	"os"
 	"strings"
 	"sync"
@@ -124,24 +125,45 @@ func TestReader(t *testing.T) {
 		t.Fatal(ok)
 	}
 
-	for _, segment := range sstore.files.getSegmentFiles() {
-		info, ok := sstore.segments[segment].meta.OffSetInfos[name]
-		if ok == false {
-			t.Fatal(segment)
+	for _, it := range sstore.indexTable.get(name).items {
+		if it.mStream != nil {
+			fmt.Printf("mStream [%d-%d) \n", it.mStream.begin, it.mStream.end)
+		} else
+		if it.segment != nil {
+			info := it.segment.meta.OffSetInfos[name]
+			fmt.Printf("segment begin [%d-%d) \n", info.Begin, info.End)
 		}
-		fmt.Println(info.Begin, info.End)
+	}
+
+	info, err := sstore.indexTable.get(name).find(521)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	if info.begin > 521 || info.end < 512 {
+		t.Fatalf("%+v", info)
 	}
 
 	var buffer = make([]byte, size)
 	n, err := sstore.ReadSeeker(name).Read(buffer)
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatalf("%+v", err)
 	}
 	if n != len(buffer) {
 		t.Fatal(n)
 	}
 	reader := crc32.NewIEEE()
 	reader.Write(buffer)
+	if reader.Sum32() != sum32 {
+		t.Fatal(sum32)
+	}
+
+	readAllData, err := ioutil.ReadAll(sstore.ReadSeeker(name))
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+
+	reader = crc32.NewIEEE()
+	reader.Write(readAllData)
 	if reader.Sum32() != sum32 {
 		t.Fatal(sum32)
 	}

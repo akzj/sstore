@@ -14,6 +14,7 @@
 package sstore
 
 import (
+	"github.com/pkg/errors"
 	"io"
 	"math"
 	"sync"
@@ -25,7 +26,6 @@ type mStream struct {
 	name      string
 	begin     int64
 	end       int64
-	size      int64
 	blocks    []block
 	blockSize int
 }
@@ -39,8 +39,7 @@ func newMStream(begin int64, blockSize int, name string) *mStream {
 		locker:    sync.RWMutex{},
 		name:      name,
 		begin:     begin,
-		end:       mStreamEnd,
-		size:      0,
+		end:       begin,
 		blocks:    blocks,
 		blockSize: blockSize,
 	}
@@ -49,26 +48,24 @@ func newMStream(begin int64, blockSize int, name string) *mStream {
 func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 	m.locker.RLock()
 	defer m.locker.RUnlock()
-	if off < m.begin || off >= m.end {
-		return 0, errOffSet
+	if off < m.begin || off > m.end {
+		return 0, errors.Wrapf(errOffSet,
+			"offset[%d] begin[%d] end[%d]", off, m.begin, m.end)
 	}
-	if len(m.blocks) == 0 {
+	if off == m.end {
 		return 0, io.EOF
 	}
 	offset := off - m.begin
 	index := offset / int64(m.blockSize)
 	offset = offset % int64(m.blockSize)
-	if index >= int64(len(m.blocks)) {
-		return 0, errOffSet
-	}
 
-	buf := p
 	var ret int
-	for len(buf) > 0 {
+	for len(p) > 0 {
 		block := &m.blocks[index]
-		n := copy(buf, block.buf[:block.limit])
+		n := copy(p, block.buf[offset:block.limit])
+		offset = 0
 		ret += n
-		buf = buf[n:]
+		p = p[n:]
 		index++
 		if index >= int64(len(m.blocks)) {
 			break
@@ -85,15 +82,15 @@ func (m *mStream) write(p []byte) int64 {
 	defer m.locker.Unlock()
 	for len(p) > 0 {
 		if m.blocks[len(m.blocks)-1].limit == m.blockSize {
-			m.blocks = append(m.blocks, makeBlock(m.begin+m.size, m.blockSize))
+			m.blocks = append(m.blocks, makeBlock(m.end, m.blockSize))
 		}
 		block := &m.blocks[len(m.blocks)-1]
 		n := copy(block.buf[block.limit:], p)
 		block.limit += n
-		m.size += int64(n)
+		m.end += int64(n)
 		p = p[n:]
 	}
-	return m.begin + m.size
+	return m.end
 }
 
 func (m *mStream) writeTo(writer io.Writer) (int, error) {
@@ -108,12 +105,6 @@ func (m *mStream) writeTo(writer io.Writer) (int, error) {
 		}
 	}
 	return n, nil
-}
-
-func (m *mStream) close() {
-	m.locker.Lock()
-	defer m.locker.Unlock()
-	m.end = m.begin + m.size
 }
 
 type block struct {
