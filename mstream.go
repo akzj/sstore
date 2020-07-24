@@ -14,7 +14,6 @@
 package sstore
 
 import (
-	"fmt"
 	"io"
 	"math"
 	"sync"
@@ -28,14 +27,14 @@ type mStream struct {
 	end       int64
 	size      int64
 	blocks    []block
-	blockSize int64
+	blockSize int
 }
 
 const mStreamEnd = math.MaxInt64
 
-func newMStream(begin int64, blockSize int64, name string) *mStream {
+func newMStream(begin int64, blockSize int, name string) *mStream {
 	blocks := make([]block, 0, 128)
-	blocks = append(blocks, makeBlock(begin))
+	blocks = append(blocks, makeBlock(begin, blockSize))
 	return &mStream{
 		locker:    sync.RWMutex{},
 		name:      name,
@@ -54,12 +53,11 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, errOffSet
 	}
 	if len(m.blocks) == 0 {
-		fmt.Println("if len(m.blocks) == 0 {")
 		return 0, io.EOF
 	}
 	offset := off - m.begin
-	index := offset / m.blockSize
-	offset = offset % m.blockSize
+	index := offset / int64(m.blockSize)
+	offset = offset % int64(m.blockSize)
 	if index >= int64(len(m.blocks)) {
 		return 0, errOffSet
 	}
@@ -77,7 +75,6 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 		}
 	}
 	if ret == 0 {
-		fmt.Println("if ret == 0 {")
 		return 0, io.EOF
 	}
 	return ret, nil
@@ -87,8 +84,8 @@ func (m *mStream) write(p []byte) int64 {
 	m.locker.Lock()
 	defer m.locker.Unlock()
 	for len(p) > 0 {
-		if m.blocks[len(m.blocks)-1].limit == blockSize {
-			m.blocks = append(m.blocks, makeBlock(m.begin+m.size))
+		if m.blocks[len(m.blocks)-1].limit == m.blockSize {
+			m.blocks = append(m.blocks, makeBlock(m.begin+m.size, m.blockSize))
 		}
 		block := &m.blocks[len(m.blocks)-1]
 		n := copy(block.buf[block.limit:], p)
@@ -119,15 +116,13 @@ func (m *mStream) close() {
 	m.end = m.begin + m.size
 }
 
-const blockSize = 4 * 1024
-
 type block struct {
 	limit int
 	begin int64
 	buf   []byte
 }
 
-func makeBlock(begin int64) block {
+func makeBlock(begin int64, blockSize int) block {
 	return block{
 		limit: 0,
 		begin: begin,

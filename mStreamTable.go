@@ -26,11 +26,11 @@ type mStreamTable struct {
 	GcTS        time.Time
 	mStreams    map[string]*mStream
 	indexTable  *indexTable
-	blockSize   int64
+	blockSize   int
 }
 
 func newMStreamTable(sizeMap *int64LockMap,
-	blockSize int64, mStreamMapSize int) *mStreamTable {
+	blockSize int, mStreamMapSize int) *mStreamTable {
 	return &mStreamTable{
 		blockSize:   blockSize,
 		mSize:       0,
