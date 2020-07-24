@@ -74,7 +74,7 @@ func (opt Options) WithMaxSegmentCount(val int) Options {
 }
 
 //WithBlockSize
-func (opt Options) WithBlockSize(val int64) Options {
+func (opt Options) WithBlockSize(val int) Options {
 	opt.BlockSize = val
 	return opt
 }
