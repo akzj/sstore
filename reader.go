@@ -13,7 +13,10 @@
 
 package sstore
 
-import "io"
+import (
+	"github.com/pkg/errors"
+	"io"
+)
 
 type reader struct {
 	offset int64
@@ -62,25 +65,24 @@ func (r *reader) Read(p []byte) (n int, err error) {
 		}
 		if item.mStream != nil {
 			n, err := item.mStream.ReadAt(buf, r.offset)
-			if err != nil && err != io.EOF {
+			if err != nil {
 				return ret, err
 			}
+			buf = buf[n:]
 			ret += n
-			buf = p[:ret]
-			if item.mStream.end == mStreamEnd {
-				return ret, nil
-			}
+			r.offset += int64(n)
 		} else if item.segment != nil {
 			if item.segment.refInc() < 0 {
-				return ret, errOffSet
+				return ret, errors.WithStack(errOffSet)
 			}
 			n, err := item.segment.Reader(r.name).ReadAt(buf, r.offset)
 			item.segment.refDec()
 			if err != nil {
 				return ret, err
 			}
+			buf = buf[n:]
 			ret += n
-			buf = p[:ret]
+			r.offset += int64(n)
 		}
 	}
 	return ret, nil

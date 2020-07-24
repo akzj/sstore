@@ -26,13 +26,9 @@ type entry struct {
 	ID   int64
 	name string
 	data []byte
-	cb   func(err error)
+	pos  int64
+	cb   func(pos int64, err error)
 }
-
-const (
-	maxNameLen = 1024
-	maxDataLen = 1024 * 1024 * 128
-)
 
 var entriesPool = sync.Pool{New: func() interface{} {
 	return make([]*entry, 0, 64)

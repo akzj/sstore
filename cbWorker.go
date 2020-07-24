@@ -13,17 +13,35 @@
 
 package sstore
 
-import (
-	"errors"
-)
+import "fmt"
 
-var (
-	errOffSet            = errors.New("offset error")
-	ErrNoFindStream      = errors.New("no find stream")
-	errNoFindIndexInfo   = errors.New("no find index info")
-	errNoFindOffsetIndex = errors.New("no find offset index")
-	errNoFindSegment     = errors.New("no find segment")
-	errWhence            = errors.New("whence error")
-	ErrWal               = errors.New("wal error")
-	errClose             = errors.New("SStore close")
-)
+type cbWorker struct {
+	queue *entryQueue
+}
+
+func newCbWorker(queue *entryQueue) *cbWorker {
+	return &cbWorker{queue: queue}
+}
+
+func (worker *cbWorker) start() {
+	go func() {
+		for {
+			entries := worker.queue.take()
+			for index := range entries {
+				e := entries[index]
+				if e.ID == closeSignal {
+					e.cb(0, nil)
+					return
+				}
+				if e == nil {
+					panic(e)
+				}
+				if e.cb == nil {
+					panic(fmt.Sprintf("%d %s", e.ID, e.name))
+				}
+				e.cb(e.pos, nil)
+			}
+			entriesPool.Put(entries[:0])
+		}
+	}()
+}

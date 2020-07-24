@@ -87,12 +87,12 @@ func (worker *wWriter) start() {
 				}
 				if worker.wal.fileSize() > worker.maxWalSize {
 					if err := worker.createNewWal(); err != nil {
-						e.cb(err)
+						e.cb(-1, err)
 						continue
 					}
 				}
 				if err := worker.wal.write(e); err != nil {
-					e.cb(err)
+					e.cb(-1, err)
 				} else {
 					commit = append(commit, e)
 				}
@@ -112,7 +112,7 @@ func (worker *wWriter) close() {
 	wg.Add(1)
 	worker.queue.put(&entry{
 		ID: closeSignal,
-		cb: func(err error) {
+		cb: func(_ int64, err error) {
 			wg.Done()
 		},
 	})

@@ -13,17 +13,29 @@
 
 package sstore
 
-import (
-	"errors"
-)
+import "sync"
 
-var (
-	errOffSet            = errors.New("offset error")
-	ErrNoFindStream      = errors.New("no find stream")
-	errNoFindIndexInfo   = errors.New("no find index info")
-	errNoFindOffsetIndex = errors.New("no find offset index")
-	errNoFindSegment     = errors.New("no find segment")
-	errWhence            = errors.New("whence error")
-	ErrWal               = errors.New("wal error")
-	errClose             = errors.New("SStore close")
-)
+type int64LockMap struct {
+	locker *sync.RWMutex
+	sizes  map[string]int64
+}
+
+func newInt64LockMap() *int64LockMap {
+	return &int64LockMap{
+		locker: new(sync.RWMutex),
+		sizes:  make(map[string]int64, 1024),
+	}
+}
+
+func (sizeMap *int64LockMap) set(name string, pos int64) {
+	sizeMap.locker.Lock()
+	sizeMap.sizes[name] = pos
+	sizeMap.locker.Unlock()
+}
+
+func (sizeMap *int64LockMap) get(name string) (int64, bool) {
+	sizeMap.locker.RLock()
+	size, ok := sizeMap.sizes[name]
+	sizeMap.locker.RUnlock()
+	return size, ok
+}

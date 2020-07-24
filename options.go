@@ -24,7 +24,7 @@ type Options struct {
 	WalDir                        string `json:"wal_dir"`
 	SegmentDir                    string `json:"segment_dir"`
 	MaxSegmentCount               int    `json:"max_segment_count"`
-	BlockSize                     int64  `json:"block_size"`
+	BlockSize                     int  `json:"block_size"`
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
 	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
 	EntryQueueCap                 int    `json:"entry_queue_cap"`
@@ -74,7 +74,7 @@ func (opt Options) WithMaxSegmentCount(val int) Options {
 }
 
 //WithBlockSize
-func (opt Options) WithBlockSize(val int64) Options {
+func (opt Options) WithBlockSize(val int) Options {
 	opt.BlockSize = val
 	return opt
 }

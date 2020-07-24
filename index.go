@@ -33,18 +33,15 @@ func (index *offsetIndex) find(offset int64) (offsetItem, error) {
 	index.l.RLock()
 	defer index.l.RUnlock()
 	if len(index.items) == 0 {
-		return offsetIndexNoFind, errNoFindOffsetIndex
+		return offsetIndexNoFind, errors.WithStack(errNoFindOffsetIndex)
 	}
 	if index.items[len(index.items)-1].begin <= offset {
 		return index.items[len(index.items)-1], nil
 	}
 	i := sort.Search(len(index.items), func(i int) bool {
-		return index.items[i].begin >= offset
+		return index.items[i].begin > offset
 	})
-	if i < len(index.items) {
-		return index.items[i], nil
-	}
-	return offsetIndexNoFind, errNoFindOffsetIndex
+	return index.items[i-1], nil
 }
 
 func (index *offsetIndex) update(item offsetItem) error {
@@ -116,32 +113,15 @@ func (index *offsetIndex) remove(item offsetItem) {
 
 type indexTable struct {
 	l            sync.RWMutex
-	commitAction chan func()
-	indexMap     map[string]*offsetIndex
 	endMap       *int64LockMap
+	indexMap     map[string]*offsetIndex
 }
 
 func newIndexTable() *indexTable {
 	return &indexTable{
 		l:            sync.RWMutex{},
 		indexMap:     map[string]*offsetIndex{},
-		commitAction: make(chan func(), 1),
 	}
-}
-
-func (index *indexTable) start() {
-	go func() {
-		for {
-			select {
-			case f := <-index.commitAction:
-				f()
-			}
-		}
-	}()
-}
-
-func (index *indexTable) commit(f func()) {
-	index.commitAction <- f
 }
 
 func (index *indexTable) removeEmptyOffsetIndex(name string) {
@@ -242,10 +222,10 @@ func (index *indexTable) remove(stream *mStream) {
 	}
 }
 
-func (index *indexTable) reader(name string) *reader {
+func (index *indexTable) reader(name string) (*reader, error) {
 	offsetIndex := index.get(name)
 	if offsetIndex == nil {
-		return nil
+		return nil, errors.Wrapf(ErrNoFindStream, "stream[%s]", name)
 	}
-	return newReader(name, offsetIndex, index.endMap)
+	return newReader(name, offsetIndex, index.endMap), nil
 }

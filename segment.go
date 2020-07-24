@@ -128,7 +128,7 @@ func (s *segment) offsetInfo(name string) (offsetInfo, error) {
 
 func (s *segment) Reader(name string) *segmentReader {
 	info, ok := s.meta.OffSetInfos[name]
-	if ok {
+	if !ok {
 		return nil
 	}
 	return &segmentReader{
@@ -154,7 +154,7 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 			Offset: Offset,
 			CRC:    hash.Sum32(),
 			Begin:  mStream.begin,
-			End:    mStream.begin + int64(n),
+			End:    mStream.end,
 		}
 		Offset += int64(n)
 		s.meta.OffSetInfos[name] = index
@@ -217,7 +217,13 @@ func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
 
 func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
 	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
-		return 0, errOffSet
+		return 0, errors.Wrapf(errOffSet,
+			fmt.Sprintf("offset[%d] begin[%d] end[%d]",
+				offset, s.indexInfo.Begin, s.indexInfo.End))
+	}
+	size := s.indexInfo.End - offset
+	if int64(len(p)) > size {
+		p = p[:size]
 	}
 	offset = offset - s.indexInfo.Begin
 	return s.r.ReadAt(p, offset)
@@ -249,13 +255,13 @@ func (ref *ref) refCount() int32 {
 
 func (ref *ref) refDec() int32 {
 	ref.l.Lock()
+	defer ref.l.Unlock()
 	if ref.c <= 0 {
 		panic(fmt.Errorf("ref.c %d error", ref.c))
 	}
 	ref.c -= 1
 	if ref.c == 0 {
 		ref.c = math.MinInt32
-		ref.l.Unlock()
 		go ref.f()
 		return 0
 	}
