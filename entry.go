@@ -22,10 +22,15 @@ import (
 	"sync"
 )
 
+type Version struct {
+	Term  int64
+	Index int64
+}
 type entry struct {
 	ID   int64
 	name string
 	data []byte
+	ver  Version
 	pos  int64
 	cb   func(pos int64, err error)
 }

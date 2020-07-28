@@ -13,29 +13,88 @@
 
 package sstore
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type int64LockMap struct {
-	locker *sync.RWMutex
-	sizes  map[string]int64
+	version     Version
+	locker      *sync.RWMutex
+	cloneLocker *sync.Mutex
+	level0      map[string]int64
+	level1      map[string]int64
 }
 
 func newInt64LockMap() *int64LockMap {
 	return &int64LockMap{
-		locker: new(sync.RWMutex),
-		sizes:  make(map[string]int64, 1024),
+		locker:      new(sync.RWMutex),
+		cloneLocker: new(sync.Mutex),
+		level0:      nil,
+		level1:      make(map[string]int64, 1024),
 	}
 }
 
-func (sizeMap *int64LockMap) set(name string, pos int64) {
+func (sizeMap *int64LockMap) set(name string, pos int64, ver Version) {
 	sizeMap.locker.Lock()
-	sizeMap.sizes[name] = pos
+	sizeMap.version = ver
+	if sizeMap.level0 != nil {
+		sizeMap.level0[name] = pos
+		sizeMap.locker.Unlock()
+		return
+	}
+	sizeMap.level1[name] = pos
 	sizeMap.locker.Unlock()
+	return
 }
 
 func (sizeMap *int64LockMap) get(name string) (int64, bool) {
 	sizeMap.locker.RLock()
-	size, ok := sizeMap.sizes[name]
+	if sizeMap.level0 != nil {
+		if size, ok := sizeMap.level0[name]; ok {
+			sizeMap.locker.RUnlock()
+			return size, ok
+		}
+	}
+	size, ok := sizeMap.level1[name]
 	sizeMap.locker.RUnlock()
 	return size, ok
+}
+
+func (sizeMap *int64LockMap) mergeMap(count int) bool {
+	sizeMap.locker.Lock()
+	for k, v := range sizeMap.level0 {
+		if count--; count == 0 {
+			sizeMap.locker.Unlock()
+			return false
+		}
+		sizeMap.level1[k] = v
+		delete(sizeMap.level0, k)
+	}
+	sizeMap.level0 = nil
+	sizeMap.locker.Unlock()
+	return true
+}
+
+func (sizeMap *int64LockMap) cloneMap() (map[string]int64, Version) {
+	sizeMap.cloneLocker.Lock()
+	sizeMap.locker.Lock()
+	sizeMap.level0 = make(map[string]int64, 1024)
+	cloneMap := make(map[string]int64, len(sizeMap.level1))
+	ver := sizeMap.version
+	sizeMap.locker.Unlock()
+	defer func() {
+		go func() {
+			defer sizeMap.cloneLocker.Unlock()
+			for {
+				if !sizeMap.mergeMap(20000) {
+					time.Sleep(time.Millisecond * 10)
+				}
+			}
+		}()
+	}()
+	for k, v := range sizeMap.level1 {
+		cloneMap[k] = v
+	}
+	return cloneMap, ver
 }

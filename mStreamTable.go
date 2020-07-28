@@ -59,7 +59,7 @@ func (m *mStreamTable) loadOrCreateMStream(name string) (*mStream, bool) {
 func (m *mStreamTable) appendEntry(e *entry) (*mStream, int64) {
 	ms, load := m.loadOrCreateMStream(e.name)
 	end := ms.write(e.data)
-	m.endMap.set(e.name, end)
+	m.endMap.set(e.name, end, e.ver)
 	m.mSize += int64(len(e.data))
 	m.lastEntryID = e.ID
 	if load {
