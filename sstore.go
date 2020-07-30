@@ -36,6 +36,11 @@ type SStore struct {
 	isClose     int32
 }
 
+type Snapshot struct {
+	EndMap  map[string]int64 `json:"end_map"`
+	Version Version          `json:"version"`
+}
+
 func Open(options Options) (*SStore, error) {
 	var sstore = &SStore{
 		options:    options,
@@ -144,4 +149,12 @@ func (sstore *SStore) Close() error {
 	sstore.files.close()
 	sstore.endWatchers.close()
 	return nil
+}
+
+func (sstore *SStore) GetSnapshot() Snapshot {
+	int64Map, version := sstore.endMap.cloneMap()
+	return Snapshot{
+		EndMap:  int64Map,
+		Version: version,
+	}
 }
