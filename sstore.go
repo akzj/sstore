@@ -32,7 +32,7 @@ type SStore struct {
 	indexTable  *indexTable
 	endWatchers *endWatchers
 	wWriter     *wWriter
-	files       *files
+	files       *manifest
 	isClose     int32
 }
 
@@ -129,7 +129,7 @@ func (sstore *SStore) Exist(name string) bool {
 	return ok
 }
 
-//GC will delete useless wal files,segments
+//GC will delete useless journal manifest,segments
 func (sstore *SStore) GC() error {
 	if err := sstore.gcWal(); err != nil {
 		return err
@@ -152,7 +152,7 @@ func (sstore *SStore) Close() error {
 }
 
 func (sstore *SStore) GetSnapshot() Snapshot {
-	int64Map, version := sstore.endMap.cloneMap()
+	int64Map, version := sstore.endMap.CloneMap()
 	return Snapshot{
 		EndMap:  int64Map,
 		Version: version,

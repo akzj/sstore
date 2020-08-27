@@ -22,16 +22,16 @@ import (
 )
 
 type wWriter struct {
-	wal        *wal
+	wal        *journal
 	queue      *entryQueue
 	commit     *entryQueue
-	files      *files
+	files      *manifest
 	maxWalSize int64
 }
 
-func newWWriter(w *wal, queue *entryQueue,
+func newWWriter(w *journal, queue *entryQueue,
 	commitQueue *entryQueue,
-	files *files, maxWalSize int64) *wWriter {
+	files *manifest, maxWalSize int64) *wWriter {
 	return &wWriter{
 		wal:        w,
 		queue:      queue,
@@ -52,17 +52,17 @@ func (worker *wWriter) walFilename() string {
 
 func (worker *wWriter) createNewWal() error {
 	walFile := worker.files.getNextWal()
-	wal, err := openWal(walFile)
+	wal, err := openJournal(walFile)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	if err := worker.files.appendWal(appendWal{Filename: walFile}); err != nil {
 		return err
 	}
-	if err := worker.wal.close(); err != nil {
+	if err := worker.wal.Close(); err != nil {
 		return err
 	}
-	header := worker.wal.getHeader()
+	header := worker.wal.GetMeta()
 	header.Old = true
 	if err := worker.files.setWalHeader(header); err != nil {
 		return err
@@ -81,24 +81,24 @@ func (worker *wWriter) start() {
 			for i := range entries {
 				e := entries[i]
 				if e.ID == closeSignal {
-					_ = worker.wal.close()
+					_ = worker.wal.Close()
 					worker.commit.put(e)
 					return
 				}
-				if worker.wal.fileSize() > worker.maxWalSize {
+				if worker.wal.Size() > worker.maxWalSize {
 					if err := worker.createNewWal(); err != nil {
 						e.cb(-1, err)
 						continue
 					}
 				}
-				if err := worker.wal.write(e); err != nil {
+				if err := worker.wal.Write(e); err != nil {
 					e.cb(-1, err)
 				} else {
 					commit = append(commit, e)
 				}
 			}
 			if len(commit) > 0 {
-				if err := worker.wal.flush(); err != nil {
+				if err := worker.wal.Flush(); err != nil {
 					log.Fatal(err.Error())
 				}
 				worker.commit.putEntries(commit)

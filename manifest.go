@@ -45,26 +45,26 @@ type delWalHeader struct {
 	Filename string `json:"filename"`
 }
 
-type files struct {
-	maxWalSize   int64
-	wal          *wal
-	l            sync.RWMutex
-	segmentDir   string
-	filesDir     string
-	walDir       string
-	segmentIndex int64
-	walIndex     int64
-	filesIndex   int64
-	inRecovery   bool
+type manifest struct {
+	l              sync.RWMutex
+	maxJournalSize int64
+	journal        *journal
+	segmentDir     string
+	manifestDir    string
+	walDir         string
+	segmentIndex   int64
+	walIndex       int64
+	filesIndex     int64
+	inRecovery     bool
 
-	EntryID      int64                `json:"entry_id"`
-	SegmentFiles []string             `json:"segment_files"`
-	WalFiles     []string             `json:"wal_files"`
-	WalHeaderMap map[string]walHeader `json:"wal_header_map"`
+	EntryID      int64                  `json:"entry_id"`
+	Segments     []string               `json:"segments"`
+	Journals     []string               `json:"journals"`
+	WalHeaderMap map[string]JournalMeta `json:"wal_header_map"`
 
-	notifyS chan interface{}
-	c       chan interface{}
-	s       chan interface{}
+	notifySnap chan interface{}
+	c          chan interface{}
+	s          chan interface{}
 }
 
 const (
@@ -72,38 +72,38 @@ const (
 	deleteSegmentType = "deleteSegment"
 	appendWalType     = "appendWal"
 	deleteWalType     = "deleteWal"
-	setWalHeaderType  = "setWalHeader" //set wal header
-	delWalHeaderType  = "delWalHeader" //set wal header
+	setWalHeaderType  = "setWalHeader" //set journal meta
+	delWalHeaderType  = "delWalHeader" //set journal meta
 
-	filesSnapshotType = "filesSnapshot"
+	manifestSnapshotType = "filesSnapshot"
 
-	segmentExt     = ".seg"
-	WalExt         = ".log"
-	filesWalExt    = ".files"
-	filesWalExtTmp = ".files.tmp"
+	segmentExt            = ".seg"
+	manifestExt           = ".log"
+	manifestJournalExt    = ".mlog"
+	manifestJournalExtTmp = ".mlog.tmp"
 )
 
-func openFiles(filesDir string, segmentDir string, walDir string) (*files, error) {
-	files := &files{
-		maxWalSize:   128 * MB,
-		wal:          nil,
-		l:            sync.RWMutex{},
-		segmentDir:   segmentDir,
-		filesDir:     filesDir,
-		walDir:       walDir,
-		segmentIndex: 0,
-		walIndex:     0,
-		filesIndex:   0,
-		inRecovery:   false,
-		EntryID:      0,
-		SegmentFiles: make([]string, 0, 128),
-		WalFiles:     make([]string, 0, 128),
-		notifyS:      make(chan interface{}, 1),
+func openManifest(manifestDir string, segmentDir string, walDir string) (*manifest, error) {
+	files := &manifest{
+		maxJournalSize: 128 * MB,
+		journal:        nil,
+		l:              sync.RWMutex{},
+		segmentDir:     segmentDir,
+		manifestDir:    manifestDir,
+		walDir:         walDir,
+		segmentIndex:   0,
+		walIndex:       0,
+		filesIndex:     0,
+		inRecovery:     false,
+		EntryID:        0,
+		Segments:     make([]string, 0, 128),
+		Journals:     make([]string, 0, 128),
+		notifySnap:   make(chan interface{}, 1),
 		c:            make(chan interface{}, 1),
 		s:            make(chan interface{}, 1),
-		WalHeaderMap: make(map[string]walHeader),
+		WalHeaderMap: make(map[string]JournalMeta),
 	}
-	if err := files.recovery(); err != nil {
+	if err := files.reload(); err != nil {
 		return nil, err
 	}
 	return files, nil
@@ -113,32 +113,32 @@ func copyStrings(strings []string) []string {
 	return append(make([]string, 0, len(strings)), strings...)
 }
 
-func (f *files) getSegmentFiles() []string {
+func (f *manifest) getSegmentFiles() []string {
 	f.l.RLock()
 	defer f.l.RUnlock()
-	return copyStrings(f.SegmentFiles)
+	return copyStrings(f.Segments)
 }
 
-func (f *files) getWalFiles() []string {
+func (f *manifest) getWalFiles() []string {
 	f.l.RLock()
 	defer f.l.RUnlock()
-	return copyStrings(f.WalFiles)
+	return copyStrings(f.Journals)
 }
 
-func (f *files) recovery() error {
+func (f *manifest) reload() error {
 	f.inRecovery = true
 	defer func() {
 		f.inRecovery = false
 	}()
 	var logFiles []string
-	err := filepath.Walk(f.filesDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(f.manifestDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		if strings.HasSuffix(info.Name(), filesWalExtTmp) {
+		if strings.HasSuffix(info.Name(), manifestJournalExtTmp) {
 			_ = os.Remove(path)
 		}
-		if strings.HasSuffix(info.Name(), filesWalExt) {
+		if strings.HasSuffix(info.Name(), manifestJournalExt) {
 			logFiles = append(logFiles, path)
 		}
 		return nil
@@ -150,14 +150,14 @@ func (f *files) recovery() error {
 	sortIntFilename(logFiles)
 	if len(logFiles) == 0 {
 		f.filesIndex = 1
-		f.wal, err = openWal(filepath.Join(f.filesDir, "1"+filesWalExt))
+		f.journal, err = openJournal(filepath.Join(f.manifestDir, "1"+manifestJournalExt))
 	} else {
-		f.wal, err = openWal(logFiles[len(logFiles)-1])
+		f.journal, err = openJournal(logFiles[len(logFiles)-1])
 		if err != nil {
 			return err
 		}
 	}
-	err = f.wal.read(func(e *entry) error {
+	err = f.journal.Read(func(e *entry) error {
 		f.EntryID = e.ID
 		switch e.name {
 		case appendSegmentType:
@@ -184,12 +184,12 @@ func (f *files) recovery() error {
 				return errors.WithStack(err)
 			}
 			return f.deleteWal(deleteW)
-		case filesSnapshotType:
+		case manifestSnapshotType:
 			if err := json.Unmarshal(e.data, f); err != nil {
 				return errors.WithStack(err)
 			}
 		case setWalHeaderType:
-			var header walHeader
+			var header JournalMeta
 			if err := json.Unmarshal(e.data, &header); err != nil {
 				return errors.WithStack(err)
 			}
@@ -202,16 +202,16 @@ func (f *files) recovery() error {
 	if err != nil {
 		return err
 	}
-	if len(f.SegmentFiles) > 0 {
-		sortIntFilename(f.SegmentFiles)
-		f.segmentIndex, err = parseFilenameIndex(f.SegmentFiles[len(f.SegmentFiles)-1])
+	if len(f.Segments) > 0 {
+		sortIntFilename(f.Segments)
+		f.segmentIndex, err = parseFilenameIndex(f.Segments[len(f.Segments)-1])
 		if err != nil {
 			return errors.WithStack(err)
 		}
 	}
-	if len(f.WalFiles) > 0 {
-		sortIntFilename(f.WalFiles)
-		f.walIndex, err = parseFilenameIndex(f.WalFiles[len(f.WalFiles)-1])
+	if len(f.Journals) > 0 {
+		sortIntFilename(f.Journals)
+		f.walIndex, err = parseFilenameIndex(f.Journals[len(f.Journals)-1])
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -230,22 +230,22 @@ func (f *files) recovery() error {
 	return nil
 }
 
-func (f *files) getNextSegment() string {
+func (f *manifest) getNextSegment() string {
 	atomic.AddInt64(&f.segmentIndex, 1)
 	return filepath.Join(f.segmentDir, strconv.FormatInt(f.segmentIndex, 10)+segmentExt)
 }
 
-func (f *files) makeSnapshot() {
+func (f *manifest) makeSnapshot() {
 	f.l.Lock()
 	defer f.l.Unlock()
-	if f.wal.fileSize() < f.maxWalSize {
+	if f.journal.Size() < f.maxJournalSize {
 		return
 	}
 	f.filesIndex++
 	f.EntryID++
-	tmpWal := strconv.FormatInt(f.filesIndex, 10) + filesWalExtTmp
-	tmpWal = filepath.Join(f.filesDir, tmpWal)
-	wal, err := openWal(tmpWal)
+	tmpJournal := strconv.FormatInt(f.filesIndex, 10) + manifestJournalExtTmp
+	tmpJournal = filepath.Join(f.manifestDir, tmpJournal)
+	journal, err := openJournal(tmpJournal)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -253,50 +253,50 @@ func (f *files) makeSnapshot() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := wal.write(&entry{
+	if err := journal.Write(&entry{
 		ID:   f.EntryID,
-		name: filesSnapshotType,
+		name: manifestSnapshotType,
 		data: data,
 		cb:   nil,
 	}); err != nil {
 		log.Fatal(err)
 	}
-	if err := wal.flush(); err != nil {
+	if err := journal.Flush(); err != nil {
 		log.Fatal(err)
 	}
-	if err := wal.close(); err != nil {
+	if err := journal.Close(); err != nil {
 		log.Fatal(err)
 	}
-	filename := strings.ReplaceAll(tmpWal, filesWalExtTmp, filesWalExt)
-	if err := os.Rename(tmpWal, filename); err != nil {
+	filename := strings.ReplaceAll(tmpJournal, manifestJournalExtTmp, manifestJournalExt)
+	if err := os.Rename(tmpJournal, filename); err != nil {
 		log.Fatal(err)
 	}
-	if err := f.wal.flush(); err != nil {
+	if err := f.journal.Flush(); err != nil {
 		log.Fatal(err)
 	}
-	if err := f.wal.close(); err != nil {
+	if err := f.journal.Close(); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Remove(f.wal.Filename()); err != nil {
+	if err := os.Remove(f.journal.Filename()); err != nil {
 		log.Fatal(err)
 	}
-	f.wal, err = openWal(filename)
+	f.journal, err = openJournal(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func (f *files) appendWal(appendW appendWal) error {
+func (f *manifest) appendWal(appendW appendWal) error {
 	f.l.Lock()
 	defer f.l.Unlock()
 	filename := filepath.Base(appendW.Filename)
-	for _, file := range f.WalFiles {
+	for _, file := range f.Journals {
 		if file == filename {
-			return errors.Errorf("wal filename repeated")
+			return errors.Errorf("journal filename repeated")
 		}
 	}
-	f.WalFiles = append(f.WalFiles, filename)
-	sortIntFilename(f.WalFiles)
+	f.Journals = append(f.Journals, filename)
+	sortIntFilename(f.Journals)
 	if f.inRecovery {
 		return nil
 	}
@@ -304,21 +304,21 @@ func (f *files) appendWal(appendW appendWal) error {
 	return f.writeEntry(appendWalType, data)
 }
 
-func (f *files) deleteWal(deleteW deleteWal) error {
+func (f *manifest) deleteWal(deleteW deleteWal) error {
 	f.l.Lock()
 	defer f.l.Unlock()
 	filename := filepath.Base(deleteW.Filename)
 	var find = false
-	for index, file := range f.WalFiles {
+	for index, file := range f.Journals {
 		if file == filename {
-			copy(f.WalFiles[index:], f.WalFiles[index+1:])
-			f.WalFiles = f.WalFiles[:len(f.WalFiles)-1]
+			copy(f.Journals[index:], f.Journals[index+1:])
+			f.Journals = f.Journals[:len(f.Journals)-1]
 			find = true
 			break
 		}
 	}
 	if find == false {
-		return errors.Errorf("no find wal file [%s]", filename)
+		return errors.Errorf("no find journal file [%s]", filename)
 	}
 	if f.inRecovery {
 		return nil
@@ -327,17 +327,17 @@ func (f *files) deleteWal(deleteW deleteWal) error {
 	return f.writeEntry(deleteWalType, data)
 }
 
-func (f *files) appendSegment(appendS appendSegment) error {
+func (f *manifest) appendSegment(appendS appendSegment) error {
 	f.l.Lock()
 	defer f.l.Unlock()
 	filename := filepath.Base(appendS.Filename)
-	for _, file := range f.SegmentFiles {
+	for _, file := range f.Segments {
 		if file == filename {
 			return errors.Errorf("segment filename repeated")
 		}
 	}
-	f.SegmentFiles = append(f.SegmentFiles, filename)
-	sortIntFilename(f.SegmentFiles)
+	f.Segments = append(f.Segments, filename)
+	sortIntFilename(f.Segments)
 	if f.inRecovery {
 		return nil
 	}
@@ -345,7 +345,7 @@ func (f *files) appendSegment(appendS appendSegment) error {
 	return f.writeEntry(appendSegmentType, data)
 }
 
-func (f *files) setWalHeader(header walHeader) error {
+func (f *manifest) setWalHeader(header JournalMeta) error {
 	f.l.Lock()
 	defer f.l.Unlock()
 	f.WalHeaderMap[filepath.Base(header.Filename)] = header
@@ -356,22 +356,22 @@ func (f *files) setWalHeader(header walHeader) error {
 	return f.writeEntry(setWalHeaderType, data)
 }
 
-func (f *files) getWalHeader(filename string) (walHeader, error) {
+func (f *manifest) getWalHeader(filename string) (JournalMeta, error) {
 	f.l.Lock()
 	defer f.l.Unlock()
 	header, ok := f.WalHeaderMap[filename]
 	if !ok {
-		return header, errors.Errorf("no find header [%s]", filename)
+		return header, errors.Errorf("no find meta [%s]", filename)
 	}
 	return header, nil
 }
 
-func (f *files) delWalHeader(header delWalHeader) error {
+func (f *manifest) delWalHeader(header delWalHeader) error {
 	f.l.Lock()
 	defer f.l.Unlock()
 	_, ok := f.WalHeaderMap[filepath.Base(header.Filename)]
 	if ok == false {
-		return errors.Errorf("no find wal [%s]", header.Filename)
+		return errors.Errorf("no find journal [%s]", header.Filename)
 	}
 	delete(f.WalHeaderMap, filepath.Base(header.Filename))
 	if f.inRecovery {
@@ -381,15 +381,15 @@ func (f *files) delWalHeader(header delWalHeader) error {
 	return f.writeEntry(delWalHeaderType, data)
 }
 
-func (f *files) deleteSegment(deleteS deleteSegment) error {
+func (f *manifest) deleteSegment(deleteS deleteSegment) error {
 	f.l.Lock()
 	defer f.l.Unlock()
 	filename := filepath.Base(deleteS.Filename)
 	var find = false
-	for index, file := range f.SegmentFiles {
+	for index, file := range f.Segments {
 		if file == filename {
-			copy(f.SegmentFiles[index:], f.SegmentFiles[index+1:])
-			f.SegmentFiles = f.SegmentFiles[:len(f.SegmentFiles)-1]
+			copy(f.Segments[index:], f.Segments[index+1:])
+			f.Segments = f.Segments[:len(f.Segments)-1]
 			find = true
 			break
 		}
@@ -404,58 +404,58 @@ func (f *files) deleteSegment(deleteS deleteSegment) error {
 	return f.writeEntry(deleteSegmentType, data)
 }
 
-func (f *files) writeEntry(typ string, data []byte, ) error {
+func (f *manifest) writeEntry(typ string, data []byte, ) error {
 	f.EntryID++
-	if err := f.wal.write(&entry{
+	if err := f.journal.Write(&entry{
 		ID:   f.EntryID,
 		name: typ,
 		data: data,
 	}); err != nil {
 		return err
 	}
-	if err := f.wal.flush(); err != nil {
+	if err := f.journal.Flush(); err != nil {
 		return err
 	}
-	if f.wal.fileSize() > f.maxWalSize {
+	if f.journal.Size() > f.maxJournalSize {
 		f.notifySnapshot()
 	}
 	return nil
 }
 
-func (f *files) notifySnapshot() {
+func (f *manifest) notifySnapshot() {
 	select {
-	case f.notifyS <- struct{}{}:
+	case f.notifySnap <- struct{}{}:
 	default:
 	}
 }
 
-func (f *files) close() {
+func (f *manifest) close() {
 	f.l.Lock()
 	defer f.l.Unlock()
-	_ = f.wal.close()
+	_ = f.journal.Close()
 	close(f.c)
 	<-f.s
 }
 
-func (f *files) start() {
+func (f *manifest) start() {
 	go func() {
 		for {
 			select {
 			case <-f.c:
 				close(f.s)
 				return
-			case <-f.notifyS:
+			case <-f.notifySnap:
 				f.makeSnapshot()
 			}
 		}
 	}()
 }
 
-func (f *files) getNextWal() string {
+func (f *manifest) getNextWal() string {
 	f.l.Lock()
 	f.l.Unlock()
 	f.walIndex++
-	return filepath.Join(f.walDir, strconv.FormatInt(f.walIndex, 10)+WalExt)
+	return filepath.Join(f.walDir, strconv.FormatInt(f.walIndex, 10)+manifestExt)
 }
 
 func parseFilenameIndex(filename string) (int64, error) {

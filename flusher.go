@@ -16,13 +16,13 @@ package sstore
 import "fmt"
 
 type flusher struct {
-	files *files
+	files *manifest
 	items chan func()
 	c     chan interface{}
 	s     chan interface{}
 }
 
-func newFlusher(files *files) *flusher {
+func newFlusher(files *manifest) *flusher {
 	return &flusher{
 		files: files,
 		items: make(chan func(), 1),

@@ -82,16 +82,16 @@ func openSegment(filename string) (*segment, error) {
 		meta:     new(segmentMeta),
 		f:        f,
 	}
-	//seek to read meta length
+	//seek to Read meta length
 	if _, err := f.Seek(-4, io.SeekEnd); err != nil {
 		return nil, errors.WithStack(err)
 	}
-	//read meta length
+	//Read meta length
 	var headerLen int32
 	if err := binary.Read(f, binary.BigEndian, &headerLen); err != nil {
 		return nil, errors.WithStack(err)
 	}
-	//seek to read meta
+	//seek to Read meta
 	if _, err := f.Seek(-int64(headerLen)-4, io.SeekEnd); err != nil {
 		return nil, errors.WithStack(err)
 	}
@@ -101,7 +101,7 @@ func openSegment(filename string) (*segment, error) {
 		return nil, errors.WithStack(err)
 	}
 	if n != len(data) {
-		return nil, errors.WithMessage(io.ErrUnexpectedEOF, "read segment head failed")
+		return nil, errors.WithMessage(io.ErrUnexpectedEOF, "Read segment head failed")
 	}
 	if err := json.Unmarshal(data, &segment.meta); err != nil {
 		return nil, errors.WithStack(err)

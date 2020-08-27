@@ -19,8 +19,8 @@ import (
 	"path/filepath"
 )
 
-// GC will delete wal,segment
-// delete wal
+// GC will delete journal,segment
+// delete journal
 // delete segment
 func (sstore *SStore) gcWal() error {
 	walFiles := sstore.files.getWalFiles()
