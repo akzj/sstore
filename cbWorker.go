@@ -39,7 +39,7 @@ func (worker *cbWorker) start() {
 				if e.cb == nil {
 					panic(fmt.Sprintf("entry.ID %d entry.streamID%d", e.ID, e.StreamID))
 				}
-				e.cb(e.pos, nil)
+				e.cb(e.end, e.err)
 			}
 			entriesPool.Put(entries[:0])
 		}

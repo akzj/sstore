@@ -14,6 +14,7 @@
 package sstore
 
 import (
+	"github.com/pkg/errors"
 	"log"
 	"path/filepath"
 	"sync"
@@ -165,7 +166,11 @@ func (c *committer) start() {
 					return
 				}
 				mStream, end := c.mutableMStreamMap.appendEntry(e)
-				e.pos = end - int64(len(e.data))
+				if end == -1 {
+					e.err = errors.Errorf("stream_id offset error")
+					continue
+				}
+				e.end = end
 				if mStream != nil {
 					c.indexTable.update(mStream)
 				}

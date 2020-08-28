@@ -29,9 +29,11 @@ type Version struct {
 type entry struct {
 	ID       int64
 	StreamID int64
+	Offset   int64
 	ver      Version
 	data     []byte
-	pos      int64
+	end      int64
+	err      error
 	cb       func(pos int64, err error)
 }
 
@@ -42,6 +44,7 @@ var entriesPool = sync.Pool{New: func() interface{} {
 func (e *entry) size() int {
 	return 8 /*ID*/ +
 		8 /*StreamID*/ +
+		8 + /*Offset*/
 		16 /*ver*/ +
 		4 + len(e.data)
 }
@@ -61,6 +64,9 @@ func (e *entry) write(writer io.Writer) error {
 		return errors.WithStack(err)
 	}
 	if err := binary.Write(writer, binary.BigEndian, e.StreamID); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := binary.Write(writer, binary.BigEndian, e.Offset); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := binary.Write(writer, binary.BigEndian, e.ver.Term); err != nil {
@@ -91,6 +97,9 @@ func decodeEntry(reader io.Reader) (*entry, error) {
 	if err := binary.Read(reader, binary.BigEndian, &e.StreamID); err != nil {
 		return nil, err
 	}
+	if err := binary.Read(reader, binary.BigEndian, &e.Offset); err != nil {
+		return nil, err
+	}
 	if err := binary.Read(reader, binary.BigEndian, &e.ver.Term); err != nil {
 		return nil, err
 	}
@@ -100,7 +109,7 @@ func decodeEntry(reader io.Reader) (*entry, error) {
 	if err := binary.Read(reader, binary.BigEndian, &dataLen); err != nil {
 		return nil, err
 	}
-	if size != dataLen+36 {
+	if size != dataLen+44 {
 		return nil, errors.WithStack(io.ErrUnexpectedEOF)
 	}
 	e.data = make([]byte, dataLen)

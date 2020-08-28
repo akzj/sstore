@@ -72,25 +72,26 @@ func (sstore *SStore) nextEntryID() int64 {
 
 //Append append the data to end of the stream
 //return offset to the data
-func (sstore *SStore) Append(streamID int64, data []byte) (int64, error) {
+func (sstore *SStore) Append(streamID int64, data []byte, offset int64) (int64, error) {
 	notify := sstore.notifyPool.Get().(chan interface{})
 	var err error
-	var wp int64
-	sstore.AsyncAppend(streamID, data, func(pos int64, e error) {
+	var newOffset int64
+	sstore.AsyncAppend(streamID, data, offset, func(offset int64, e error) {
 		err = e
-		wp = pos
+		newOffset = offset
 		notify <- struct{}{}
 	})
 	<-notify
 	sstore.notifyPool.Put(notify)
-	return wp, err
+	return newOffset, err
 }
 
 //AsyncAppend async append the data to end of the stream
-func (sstore *SStore) AsyncAppend(streamID int64, data []byte, cb func(offset int64, err error)) {
+func (sstore *SStore) AsyncAppend(streamID int64, data []byte, offset int64, cb func(offset int64, err error)) {
 	sstore.entryQueue.put(&entry{
 		ID:       sstore.nextEntryID(),
 		StreamID: streamID,
+		Offset:   offset,
 		data:     data,
 		cb:       cb,
 	})

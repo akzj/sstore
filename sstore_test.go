@@ -23,7 +23,7 @@ func TestOpen(t *testing.T) {
 	if sstore.committer.mutableMStreamMap == nil {
 		t.Fatal(sstore.committer.mutableMStreamMap)
 	}
-	if _, err := sstore.Append(1, []byte("hello world")); err != nil {
+	if _, err := sstore.Append(1, []byte("hello world"), -1); err != nil {
 		t.Fatal(err)
 	}
 	pos, ok := sstore.End(1)
@@ -51,7 +51,7 @@ func TestRecover(t *testing.T) {
 		var wg sync.WaitGroup
 		for i := 0; i < 100000; i++ {
 			wg.Add(1)
-			sstore.AsyncAppend(streamID, []byte(data), func(offset int64, err error) {
+			sstore.AsyncAppend(streamID, []byte(data), -1, func(offset int64, err error) {
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}
@@ -112,7 +112,7 @@ func TestReader(t *testing.T) {
 		wg.Add(1)
 		d := []byte(data)
 		_, _ = writer.Write(d)
-		sstore.AsyncAppend(streamID, d, func(pos int64, err error) {
+		sstore.AsyncAppend(streamID, d, -1, func(pos int64, err error) {
 			if err != nil {
 				t.Fatalf("%+v", err)
 			}
@@ -188,7 +188,7 @@ func TestSStore_Watcher(t *testing.T) {
 
 	var streamID = int64(1)
 	var data = "hello world"
-	if _, err := sstore.Append(streamID, []byte(data)); err != nil {
+	if _, err := sstore.Append(streamID, []byte(data), -1); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestSStore_Watcher(t *testing.T) {
 
 		select {
 		case pos := <-watcher.Watch():
-			fmt.Println("pos", pos)
+			fmt.Println("end", pos)
 		}
 
 		readAll, err = ioutil.ReadAll(reader)
@@ -231,7 +231,7 @@ func TestSStore_Watcher(t *testing.T) {
 	}()
 
 	time.Sleep(time.Second)
-	if _, err := sstore.Append(streamID, []byte("hello world2")); err != nil {
+	if _, err := sstore.Append(streamID, []byte("hello world2"), -1); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -254,7 +254,7 @@ func TestSStore_AppendMultiStream(t *testing.T) {
 		_, _ = crc32Hash.Write(data)
 		for i2 := 0; i2 < 1000; i2++ {
 			wg.Add(1)
-			sstore.AsyncAppend(int64(i2), data, func(offset int64, err error) {
+			sstore.AsyncAppend(int64(i2), data, -1, func(offset int64, err error) {
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}
@@ -297,7 +297,7 @@ func TestSStore_GC(t *testing.T) {
 		_, _ = crc32Hash.Write(data)
 		for i2 := 0; i2 < 1000; i2++ {
 			wg.Add(1)
-			sstore.AsyncAppend(int64(i2), data, func(offset int64, err error) {
+			sstore.AsyncAppend(int64(i2), data, -1, func(offset int64, err error) {
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}

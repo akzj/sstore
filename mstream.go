@@ -77,9 +77,12 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 	return ret, nil
 }
 
-func (m *mStream) write(p []byte) int64 {
+func (m *mStream) write(offset int64, p []byte) int64 {
 	m.locker.Lock()
 	defer m.locker.Unlock()
+	if offset != -1 && m.end != offset {
+		return -1
+	}
 	for len(p) > 0 {
 		if m.bufPages[len(m.bufPages)-1].limit == m.blockSize {
 			m.bufPages = append(m.bufPages, newPage(m.end, m.blockSize))
