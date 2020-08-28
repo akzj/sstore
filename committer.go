@@ -170,7 +170,7 @@ func (c *committer) start() {
 					c.indexTable.update(mStream)
 				}
 				item := notifyPool.Get().(*notify)
-				item.name = e.name
+				item.streamID = e.StreamID
 				item.end = end
 				c.endWatchers.notify(item)
 				if c.mutableMStreamMap.mSize >= c.maxMStreamTableSize {

@@ -23,7 +23,7 @@ import (
 //memory stream
 type mStream struct {
 	locker    sync.RWMutex
-	name      string
+	streamID  int64
 	begin     int64
 	end       int64
 	bufPages  []bufPage
@@ -32,12 +32,12 @@ type mStream struct {
 
 const mStreamEnd = math.MaxInt64
 
-func newMStream(begin int64, blockSize int, name string) *mStream {
+func newMStream(begin int64, blockSize int, streamID int64) *mStream {
 	blocks := make([]bufPage, 0, 128)
 	blocks = append(blocks, newPage(begin, blockSize))
 	return &mStream{
 		locker:    sync.RWMutex{},
-		name:      name,
+		streamID:  streamID,
 		begin:     begin,
 		end:       begin,
 		bufPages:  blocks,

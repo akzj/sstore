@@ -75,7 +75,7 @@ func reload(sStore *SStore) error {
 			return err
 		}
 		for _, info := range segment.meta.OffSetInfos {
-			sStore.endMap.set(info.Name, info.End, segment.meta.Ver)
+			sStore.endMap.set(info.StreamID, info.End, segment.meta.Ver)
 		}
 		if segment.meta.LastEntryID <= sStore.entryID {
 			return errors.Errorf("segment meta LastEntryID[%d] error",

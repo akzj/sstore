@@ -68,14 +68,13 @@ type manifest struct {
 }
 
 const (
-	appendSegmentType = "appendSegment" //append segment
-	deleteSegmentType = "deleteSegment"
-	appendWalType     = "appendWal"
-	deleteWalType     = "deleteWal"
-	setWalHeaderType  = "setWalHeader" //set journal meta
-	delWalHeaderType  = "delWalHeader" //set journal meta
-
-	manifestSnapshotType = "filesSnapshot"
+	appendSegmentType    = iota //"appendSegment" //append segment
+	deleteSegmentType           //= "deleteSegment"
+	appendWalType               //= "appendWal"
+	deleteWalType               //= "deleteWal"
+	setWalHeaderType            //= "setWalHeader" //set journal meta
+	delWalHeaderType            //= "delWalHeader" //set journal meta
+	manifestSnapshotType        //= "filesSnapshot"
 
 	segmentExt            = ".seg"
 	manifestExt           = ".log"
@@ -96,12 +95,12 @@ func openManifest(manifestDir string, segmentDir string, walDir string) (*manife
 		filesIndex:     0,
 		inRecovery:     false,
 		EntryID:        0,
-		Segments:     make([]string, 0, 128),
-		Journals:     make([]string, 0, 128),
-		notifySnap:   make(chan interface{}, 1),
-		c:            make(chan interface{}, 1),
-		s:            make(chan interface{}, 1),
-		WalHeaderMap: make(map[string]JournalMeta),
+		Segments:       make([]string, 0, 128),
+		Journals:       make([]string, 0, 128),
+		notifySnap:     make(chan interface{}, 1),
+		c:              make(chan interface{}, 1),
+		s:              make(chan interface{}, 1),
+		WalHeaderMap:   make(map[string]JournalMeta),
 	}
 	if err := files.reload(); err != nil {
 		return nil, err
@@ -159,7 +158,7 @@ func (f *manifest) reload() error {
 	}
 	err = f.journal.Read(func(e *entry) error {
 		f.EntryID = e.ID
-		switch e.name {
+		switch e.StreamID {
 		case appendSegmentType:
 			var appendS appendSegment
 			if err := json.Unmarshal(e.data, &appendS); err != nil {
@@ -195,7 +194,7 @@ func (f *manifest) reload() error {
 			}
 			return f.setWalHeader(header)
 		default:
-			log.Fatalf("unknown type %s", e.name)
+			log.Fatalf("unknown type %d", e.StreamID)
 		}
 		return nil
 	})
@@ -255,7 +254,7 @@ func (f *manifest) makeSnapshot() {
 	}
 	if err := journal.Write(&entry{
 		ID:   f.EntryID,
-		name: manifestSnapshotType,
+		StreamID: manifestSnapshotType,
 		data: data,
 		cb:   nil,
 	}); err != nil {
@@ -404,11 +403,11 @@ func (f *manifest) deleteSegment(deleteS deleteSegment) error {
 	return f.writeEntry(deleteSegmentType, data)
 }
 
-func (f *manifest) writeEntry(typ string, data []byte, ) error {
+func (f *manifest) writeEntry(typ int64, data []byte, ) error {
 	f.EntryID++
 	if err := f.journal.Write(&entry{
 		ID:   f.EntryID,
-		name: typ,
+		StreamID: typ,
 		data: data,
 	}); err != nil {
 		return err

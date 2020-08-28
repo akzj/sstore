@@ -37,8 +37,8 @@ type SStore struct {
 }
 
 type Snapshot struct {
-	EndMap  map[string]int64 `json:"end_map"`
-	Version Version          `json:"version"`
+	EndMap  map[int64]int64 `json:"end_map"`
+	Version Version         `json:"version"`
 }
 
 func Open(options Options) (*SStore, error) {
@@ -72,11 +72,11 @@ func (sstore *SStore) nextEntryID() int64 {
 
 //Append append the data to end of the stream
 //return offset to the data
-func (sstore *SStore) Append(name string, data []byte) (int64, error) {
+func (sstore *SStore) Append(streamID int64, data []byte) (int64, error) {
 	notify := sstore.notifyPool.Get().(chan interface{})
 	var err error
 	var wp int64
-	sstore.AsyncAppend(name, data, func(pos int64, e error) {
+	sstore.AsyncAppend(streamID, data, func(pos int64, e error) {
 		err = e
 		wp = pos
 		notify <- struct{}{}
@@ -87,35 +87,35 @@ func (sstore *SStore) Append(name string, data []byte) (int64, error) {
 }
 
 //AsyncAppend async append the data to end of the stream
-func (sstore *SStore) AsyncAppend(name string, data []byte, cb func(offset int64, err error)) {
+func (sstore *SStore) AsyncAppend(streamID int64, data []byte, cb func(offset int64, err error)) {
 	sstore.entryQueue.put(&entry{
-		ID:   sstore.nextEntryID(),
-		name: name,
-		data: data,
-		cb:   cb,
+		ID:       sstore.nextEntryID(),
+		StreamID: streamID,
+		data:     data,
+		cb:       cb,
 	})
 }
 
 //Reader create Reader of the stream
-func (sstore *SStore) Reader(name string) (io.ReadSeeker, error) {
-	return sstore.indexTable.reader(name)
+func (sstore *SStore) Reader(streamID int64) (io.ReadSeeker, error) {
+	return sstore.indexTable.reader(streamID)
 }
 
 //Watcher create watcher of the stream
-func (sstore *SStore) Watcher(name string) Watcher {
-	return sstore.endWatchers.newEndWatcher(name)
+func (sstore *SStore) Watcher(streamID int64) Watcher {
+	return sstore.endWatchers.newEndWatcher(streamID)
 }
 
 //size return the end of stream.
 //return _,false when the stream no exist
-func (sstore *SStore) End(name string) (int64, bool) {
-	return sstore.endMap.get(name)
+func (sstore *SStore) End(streamID int64) (int64, bool) {
+	return sstore.endMap.get(streamID)
 }
 
 //base return the begin of stream.
 //return 0,false when the stream no exist
-func (sstore *SStore) Begin(name string) (int64, bool) {
-	offsetIndex := sstore.indexTable.get(name)
+func (sstore *SStore) Begin(streamID int64) (int64, bool) {
+	offsetIndex := sstore.indexTable.get(streamID)
 	if offsetIndex == nil {
 		return 0, false
 	}
@@ -124,8 +124,8 @@ func (sstore *SStore) Begin(name string) (int64, bool) {
 
 //Exist
 //return true if the stream exist otherwise return false
-func (sstore *SStore) Exist(name string) bool {
-	_, ok := sstore.Begin(name)
+func (sstore *SStore) Exist(streamID int64) bool {
+	_, ok := sstore.Begin(streamID)
 	return ok
 }
 

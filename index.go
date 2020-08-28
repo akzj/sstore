@@ -15,18 +15,18 @@ type offsetItem struct {
 }
 
 type offsetIndex struct {
-	name  string
-	l     sync.RWMutex
-	items []offsetItem
+	streamID int64
+	l        sync.RWMutex
+	items    []offsetItem
 }
 
 var offsetIndexNoFind = offsetItem{}
 
-func newOffsetIndex(name string, item offsetItem) *offsetIndex {
+func newOffsetIndex(streamID int64, item offsetItem) *offsetIndex {
 	return &offsetIndex{
-		name:  name,
-		l:     sync.RWMutex{},
-		items: append(make([]offsetItem, 0, 128), item),
+		streamID: streamID,
+		l:        sync.RWMutex{},
+		items:    append(make([]offsetItem, 0, 128), item),
 	}
 }
 
@@ -115,43 +115,43 @@ func (index *offsetIndex) remove(item offsetItem) {
 type indexTable struct {
 	l        sync.RWMutex
 	endMap   *int64LockMap
-	indexMap map[string]*offsetIndex
+	indexMap map[int64]*offsetIndex
 }
 
 func newIndexTable() *indexTable {
 	return &indexTable{
 		l:        sync.RWMutex{},
-		indexMap: map[string]*offsetIndex{},
+		indexMap: map[int64]*offsetIndex{},
 	}
 }
 
-func (index *indexTable) removeEmptyOffsetIndex(name string) {
+func (index *indexTable) removeEmptyOffsetIndex(streamID int64) {
 	index.l.Lock()
 	defer index.l.Unlock()
-	if offsetIndex, ok := index.indexMap[name]; ok {
+	if offsetIndex, ok := index.indexMap[streamID]; ok {
 		if _, ok := offsetIndex.begin(); ok == false {
-			delete(index.indexMap, name)
+			delete(index.indexMap, streamID)
 		}
 	}
 }
 
-func (index *indexTable) get(name string) *offsetIndex {
+func (index *indexTable) get(streamID int64) *offsetIndex {
 	index.l.Lock()
 	defer index.l.Unlock()
-	if offsetIndex, ok := index.indexMap[name]; ok {
+	if offsetIndex, ok := index.indexMap[streamID]; ok {
 		return offsetIndex
 	}
 	return nil
 }
 
-func (index *indexTable) loadOrCreate(name string, item offsetItem) (*offsetIndex, bool) {
+func (index *indexTable) loadOrCreate(streamID int64, item offsetItem) (*offsetIndex, bool) {
 	index.l.Lock()
 	defer index.l.Unlock()
-	if offsetIndex, ok := index.indexMap[name]; ok {
+	if offsetIndex, ok := index.indexMap[streamID]; ok {
 		return offsetIndex, true
 	}
-	offsetIndex := newOffsetIndex(name, item)
-	index.indexMap[name] = offsetIndex
+	offsetIndex := newOffsetIndex(streamID, item)
+	index.indexMap[streamID] = offsetIndex
 	return offsetIndex, false
 }
 
@@ -164,7 +164,7 @@ func (index *indexTable) update1(segment *segment) error {
 			begin:   it.Begin,
 			end:     it.End,
 		}
-		offsetIndex, load := index.loadOrCreate(it.Name, item)
+		offsetIndex, load := index.loadOrCreate(it.StreamID, item)
 		if load {
 			if err := offsetIndex.update(item); err != nil {
 				return err
@@ -176,7 +176,7 @@ func (index *indexTable) update1(segment *segment) error {
 
 func (index *indexTable) remove1(segment *segment) error {
 	for _, info := range segment.meta.OffSetInfos {
-		if offsetIndex := index.get(info.Name); offsetIndex != nil {
+		if offsetIndex := index.get(info.StreamID); offsetIndex != nil {
 			offsetIndex.remove(offsetItem{
 				segment: segment,
 				mStream: nil,
@@ -185,10 +185,10 @@ func (index *indexTable) remove1(segment *segment) error {
 			})
 			segment.refDec()
 			if _, ok := offsetIndex.begin(); ok == false {
-				index.removeEmptyOffsetIndex(info.Name)
+				index.removeEmptyOffsetIndex(info.StreamID)
 			}
 		} else {
-			return errors.Errorf("no find offsetIndex for %s", info.Name)
+			return errors.Errorf("no find offsetIndex for %d", info.StreamID)
 		}
 	}
 	return nil
@@ -201,7 +201,7 @@ func (index *indexTable) update(stream *mStream) {
 		begin:   stream.begin,
 		end:     stream.end,
 	}
-	offsetIndex, loaded := index.loadOrCreate(stream.name, item)
+	offsetIndex, loaded := index.loadOrCreate(stream.streamID, item)
 	if loaded {
 		if err := offsetIndex.update(item); err != nil {
 			log.Panicf("%+v", err)
@@ -210,7 +210,7 @@ func (index *indexTable) update(stream *mStream) {
 }
 
 func (index *indexTable) remove(stream *mStream) {
-	if offsetIndex := index.get(stream.name); offsetIndex != nil {
+	if offsetIndex := index.get(stream.streamID); offsetIndex != nil {
 		offsetIndex.remove(offsetItem{
 			segment: nil,
 			mStream: stream,
@@ -218,17 +218,17 @@ func (index *indexTable) remove(stream *mStream) {
 			end:     stream.end,
 		})
 		if _, ok := offsetIndex.begin(); ok == false {
-			index.removeEmptyOffsetIndex(stream.name)
+			index.removeEmptyOffsetIndex(stream.streamID)
 		}
 	} else {
 		panic("no find offsetIndex")
 	}
 }
 
-func (index *indexTable) reader(name string) (*reader, error) {
-	offsetIndex := index.get(name)
+func (index *indexTable) reader(streamID int64) (*reader, error) {
+	offsetIndex := index.get(streamID)
 	if offsetIndex == nil {
-		return nil, errors.Wrapf(ErrNoFindStream, "stream[%s]", name)
+		return nil, errors.Wrapf(ErrNoFindStream, "stream[%d]", streamID)
 	}
-	return newReader(name, offsetIndex, index.endMap), nil
+	return newReader(streamID, offsetIndex, index.endMap), nil
 }

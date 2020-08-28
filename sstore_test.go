@@ -23,10 +23,10 @@ func TestOpen(t *testing.T) {
 	if sstore.committer.mutableMStreamMap == nil {
 		t.Fatal(sstore.committer.mutableMStreamMap)
 	}
-	if _, err := sstore.Append("hello", []byte("hello world")); err != nil {
+	if _, err := sstore.Append(1, []byte("hello world")); err != nil {
 		t.Fatal(err)
 	}
-	pos, ok := sstore.End("hello")
+	pos, ok := sstore.End(1)
 	if !ok {
 		t.Fatal(ok)
 	}
@@ -46,12 +46,12 @@ func TestRecover(t *testing.T) {
 		if err != nil {
 			t.Fatal(err.Error())
 		}
-		var name = "stream1"
+		var streamID = int64(1)
 		var data = strings.Repeat("hello world,", 10)
 		var wg sync.WaitGroup
 		for i := 0; i < 100000; i++ {
 			wg.Add(1)
-			sstore.AsyncAppend(name, []byte(data), func(offset int64, err error) {
+			sstore.AsyncAppend(streamID, []byte(data), func(offset int64, err error) {
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}
@@ -97,11 +97,12 @@ func TestWalHeader(t *testing.T) {
 
 func TestReader(t *testing.T) {
 	os.RemoveAll("data")
+	defer os.RemoveAll("data")
 	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(MB))
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	var name = "stream1"
+	var streamID = int64(1)
 	var data = strings.Repeat("hello world,", 10)
 	var wg sync.WaitGroup
 
@@ -111,7 +112,7 @@ func TestReader(t *testing.T) {
 		wg.Add(1)
 		d := []byte(data)
 		_, _ = writer.Write(d)
-		sstore.AsyncAppend(name, d, func(pos int64, err error) {
+		sstore.AsyncAppend(streamID, d, func(pos int64, err error) {
 			if err != nil {
 				t.Fatalf("%+v", err)
 			}
@@ -121,22 +122,22 @@ func TestReader(t *testing.T) {
 	wg.Wait()
 
 	sum32 := writer.Sum32()
-	size, ok := sstore.End(name)
+	size, ok := sstore.End(streamID)
 	if ok == false {
 		t.Fatal(ok)
 	}
 
-	for _, it := range sstore.indexTable.get(name).items {
+	for _, it := range sstore.indexTable.get(streamID).items {
 		if it.mStream != nil {
 			fmt.Printf("mStream [%d-%d) \n", it.mStream.begin, it.mStream.end)
 		} else
 		if it.segment != nil {
-			info := it.segment.meta.OffSetInfos[name]
+			info := it.segment.meta.OffSetInfos[streamID]
 			fmt.Printf("segment begin [%d-%d) \n", info.Begin, info.End)
 		}
 	}
 
-	info, err := sstore.indexTable.get(name).find(521)
+	info, err := sstore.indexTable.get(streamID).find(521)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -145,7 +146,7 @@ func TestReader(t *testing.T) {
 	}
 
 	var buffer = make([]byte, size)
-	reader, err := sstore.Reader(name)
+	reader, err := sstore.Reader(streamID)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -162,7 +163,7 @@ func TestReader(t *testing.T) {
 		t.Fatal(sum32)
 	}
 
-	reader, _ = sstore.Reader(name)
+	reader, _ = sstore.Reader(streamID)
 	readAllData, err := ioutil.ReadAll(reader)
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -179,19 +180,20 @@ func TestReader(t *testing.T) {
 
 func TestSStore_Watcher(t *testing.T) {
 	os.RemoveAll("data")
+	defer os.RemoveAll("data")
 	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(MB))
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
 
-	var name = "stream1"
+	var streamID = int64(1)
 	var data = "hello world"
-	if _, err := sstore.Append(name, []byte(data)); err != nil {
+	if _, err := sstore.Append(streamID, []byte(data)); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
 	go func() {
-		reader, err := sstore.Reader(name)
+		reader, err := sstore.Reader(streamID)
 		if err != nil {
 			t.Fatalf("%+v", err)
 		}
@@ -211,7 +213,7 @@ func TestSStore_Watcher(t *testing.T) {
 			t.Fatalf("reader no data remain")
 		}
 
-		watcher := sstore.Watcher(name)
+		watcher := sstore.Watcher(streamID)
 		defer watcher.Close()
 
 		select {
@@ -229,7 +231,7 @@ func TestSStore_Watcher(t *testing.T) {
 	}()
 
 	time.Sleep(time.Second)
-	if _, err := sstore.Append(name, []byte("hello world2")); err != nil {
+	if _, err := sstore.Append(streamID, []byte("hello world2")); err != nil {
 		t.Fatalf("%+v", err)
 	}
 
@@ -240,6 +242,7 @@ func TestSStore_Watcher(t *testing.T) {
 
 func TestSStore_AppendMultiStream(t *testing.T) {
 	os.RemoveAll("data")
+	defer os.RemoveAll("data")
 	sstore, err := Open(DefaultOptions("data").WithMaxMStreamTableSize(4 * MB))
 	if err != nil {
 		t.Fatalf("%+v", err)
@@ -251,7 +254,7 @@ func TestSStore_AppendMultiStream(t *testing.T) {
 		_, _ = crc32Hash.Write(data)
 		for i2 := 0; i2 < 1000; i2++ {
 			wg.Add(1)
-			sstore.AsyncAppend(fmt.Sprintf("stream%d", i2), data, func(offset int64, err error) {
+			sstore.AsyncAppend(int64(i2), data, func(offset int64, err error) {
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}
@@ -261,7 +264,7 @@ func TestSStore_AppendMultiStream(t *testing.T) {
 	}
 	wg.Wait()
 
-	reader, err := sstore.Reader("stream200")
+	reader, err := sstore.Reader(200)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -280,6 +283,7 @@ func TestSStore_AppendMultiStream(t *testing.T) {
 
 func TestSStore_GC(t *testing.T) {
 	os.RemoveAll("data")
+	defer os.RemoveAll("data")
 	sstore, err := Open(DefaultOptions("data").
 		WithMaxMStreamTableSize(4 * MB).
 		WithMaxSegmentCount(5))
@@ -293,7 +297,7 @@ func TestSStore_GC(t *testing.T) {
 		_, _ = crc32Hash.Write(data)
 		for i2 := 0; i2 < 1000; i2++ {
 			wg.Add(1)
-			sstore.AsyncAppend(fmt.Sprintf("stream%d", i2), data, func(offset int64, err error) {
+			sstore.AsyncAppend(int64(i2), data, func(offset int64, err error) {
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}

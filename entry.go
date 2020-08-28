@@ -27,12 +27,12 @@ type Version struct {
 	Index int64
 }
 type entry struct {
-	ID   int64
-	name string
-	data []byte
-	ver  Version
-	pos  int64
-	cb   func(pos int64, err error)
+	ID       int64
+	StreamID int64
+	ver      Version
+	data     []byte
+	pos      int64
+	cb       func(pos int64, err error)
 }
 
 var entriesPool = sync.Pool{New: func() interface{} {
@@ -40,7 +40,10 @@ var entriesPool = sync.Pool{New: func() interface{} {
 }}
 
 func (e *entry) size() int {
-	return len(e.data) + len(e.name) + 4 /*len(e.data)*/ + 4 /*len(e.name)*/ + 8 /*ID*/
+	return 8 /*ID*/ +
+		8 /*StreamID*/ +
+		16 /*ver*/ +
+		4 + len(e.data)
 }
 
 func (e *entry) encode() []byte {
@@ -54,16 +57,19 @@ func (e *entry) write(writer io.Writer) error {
 	if err := binary.Write(writer, binary.BigEndian, uint32(e.size())); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := binary.Write(writer, binary.BigEndian, uint32(len(e.name))); err != nil {
-		return errors.WithStack(err)
-	}
-	if err := binary.Write(writer, binary.BigEndian, uint32(len(e.data))); err != nil {
-		return errors.WithStack(err)
-	}
 	if err := binary.Write(writer, binary.BigEndian, e.ID); err != nil {
 		return errors.WithStack(err)
 	}
-	if _, err := writer.Write([]byte(e.name)); err != nil {
+	if err := binary.Write(writer, binary.BigEndian, e.StreamID); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := binary.Write(writer, binary.BigEndian, e.ver.Term); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := binary.Write(writer, binary.BigEndian, e.ver.Index); err != nil {
+		return errors.WithStack(err)
+	}
+	if err := binary.Write(writer, binary.BigEndian, uint32(len(e.data))); err != nil {
 		return errors.WithStack(err)
 	}
 	if _, err := writer.Write(e.data); err != nil {
@@ -73,37 +79,32 @@ func (e *entry) write(writer io.Writer) error {
 }
 
 func decodeEntry(reader io.Reader) (*entry, error) {
-	var nameLen uint32
 	var dataLen uint32
 	var size uint32
 	var e = new(entry)
 	if err := binary.Read(reader, binary.BigEndian, &size); err != nil {
 		return nil, err
 	}
-	if err := binary.Read(reader, binary.BigEndian, &nameLen); err != nil {
+	if err := binary.Read(reader, binary.BigEndian, &e.ID); err != nil {
+		return nil, err
+	}
+	if err := binary.Read(reader, binary.BigEndian, &e.StreamID); err != nil {
+		return nil, err
+	}
+	if err := binary.Read(reader, binary.BigEndian, &e.ver.Term); err != nil {
+		return nil, err
+	}
+	if err := binary.Read(reader, binary.BigEndian, &e.ver.Index); err != nil {
 		return nil, err
 	}
 	if err := binary.Read(reader, binary.BigEndian, &dataLen); err != nil {
 		return nil, err
 	}
-	if err := binary.Read(reader, binary.BigEndian, &e.ID); err != nil {
-		return nil, err
-	}
-	if size != nameLen+dataLen+16 {
+	if size != dataLen+36 {
 		return nil, errors.WithStack(io.ErrUnexpectedEOF)
 	}
-	var name = make([]byte, nameLen)
 	e.data = make([]byte, dataLen)
-
-	n, err := io.ReadFull(reader, name)
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	e.name = string(name)
-	if n != int(nameLen) {
-		return nil, errors.WithStack(io.ErrUnexpectedEOF)
-	}
-	n, err = io.ReadFull(reader, e.data)
+	n, err := io.ReadFull(reader, e.data)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}

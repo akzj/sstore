@@ -29,18 +29,18 @@ import (
 )
 
 type offsetInfo struct {
-	Name   string `json:"name"`
-	Begin  int64  `json:"begin"`
-	Offset int64  `json:"offset"`
-	End    int64  `json:"end"`
-	CRC    uint32 `json:"crc"`
+	StreamID int64  `json:"stream_id"`
+	Begin    int64  `json:"begin"`
+	Offset   int64  `json:"offset"`
+	End      int64  `json:"end"`
+	CRC      uint32 `json:"crc"`
 }
 
 type segmentMeta struct {
 	Ver         Version               `json:"ver"`
 	GcTS        time.Time             `json:"gc_ts"`
 	LastEntryID int64                 `json:"last_entry_id"`
-	OffSetInfos map[string]offsetInfo `json:"offset_infos"`
+	OffSetInfos map[int64]offsetInfo `json:"offset_infos"`
 }
 
 type segment struct {
@@ -68,7 +68,7 @@ func createSegment(filename string) (*segment, error) {
 			log.Fatal(err.Error())
 		}
 	})
-	segment.meta.OffSetInfos = make(map[string]offsetInfo)
+	segment.meta.OffSetInfos = make(map[int64]offsetInfo)
 	return segment, nil
 }
 
@@ -122,16 +122,16 @@ func openSegment(filename string) (*segment, error) {
 func (s *segment) lastEntryID() int64 {
 	return s.meta.LastEntryID
 }
-func (s *segment) offsetInfo(name string) (offsetInfo, error) {
-	indexInfo, ok := s.meta.OffSetInfos[name]
+func (s *segment) offsetInfo(streamID int64) (offsetInfo, error) {
+	indexInfo, ok := s.meta.OffSetInfos[streamID]
 	if ok == false {
 		return indexInfo, errNoFindIndexInfo
 	}
 	return indexInfo, nil
 }
 
-func (s *segment) Reader(name string) *segmentReader {
-	info, ok := s.meta.OffSetInfos[name]
+func (s *segment) Reader(streamID int64) *segmentReader {
+	info, ok := s.meta.OffSetInfos[streamID]
 	if !ok {
 		return nil
 	}
@@ -146,7 +146,7 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 	defer s.l.Unlock()
 	var Offset int64
 	writer := bufio.NewWriterSize(s.f, 1024*1024)
-	for name, mStream := range table.mStreams {
+	for streamID, mStream := range table.mStreams {
 		hash := crc32.NewIEEE()
 		mWriter := io.MultiWriter(writer, hash)
 		n, err := mStream.writeTo(mWriter)
@@ -154,14 +154,14 @@ func (s *segment) flushMStreamTable(table *mStreamTable) error {
 			return err
 		}
 		index := offsetInfo{
-			Name:   name,
-			Offset: Offset,
-			CRC:    hash.Sum32(),
-			Begin:  mStream.begin,
-			End:    mStream.end,
+			StreamID: streamID,
+			Offset:   Offset,
+			CRC:      hash.Sum32(),
+			Begin:    mStream.begin,
+			End:      mStream.end,
 		}
 		Offset += int64(n)
-		s.meta.OffSetInfos[name] = index
+		s.meta.OffSetInfos[streamID] = index
 	}
 	s.meta.LastEntryID = table.lastEntryID
 	s.meta.GcTS = table.GcTS

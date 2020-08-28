@@ -22,8 +22,8 @@ type int64LockMap struct {
 	version     Version
 	locker      *sync.RWMutex
 	cloneLocker *sync.Mutex
-	level0      map[string]int64
-	level1      map[string]int64
+	level0      map[int64]int64
+	level1      map[int64]int64
 }
 
 func newInt64LockMap() *int64LockMap {
@@ -31,32 +31,32 @@ func newInt64LockMap() *int64LockMap {
 		locker:      new(sync.RWMutex),
 		cloneLocker: new(sync.Mutex),
 		level0:      nil,
-		level1:      make(map[string]int64, 1024),
+		level1:      make(map[int64]int64, 1024),
 	}
 }
 
-func (sizeMap *int64LockMap) set(name string, pos int64, ver Version) {
+func (sizeMap *int64LockMap) set(streamID int64, pos int64, ver Version) {
 	sizeMap.locker.Lock()
 	sizeMap.version = ver
 	if sizeMap.level0 != nil {
-		sizeMap.level0[name] = pos
+		sizeMap.level0[streamID] = pos
 		sizeMap.locker.Unlock()
 		return
 	}
-	sizeMap.level1[name] = pos
+	sizeMap.level1[streamID] = pos
 	sizeMap.locker.Unlock()
 	return
 }
 
-func (sizeMap *int64LockMap) get(name string) (int64, bool) {
+func (sizeMap *int64LockMap) get(streamID int64) (int64, bool) {
 	sizeMap.locker.RLock()
 	if sizeMap.level0 != nil {
-		if size, ok := sizeMap.level0[name]; ok {
+		if size, ok := sizeMap.level0[streamID]; ok {
 			sizeMap.locker.RUnlock()
 			return size, ok
 		}
 	}
-	size, ok := sizeMap.level1[name]
+	size, ok := sizeMap.level1[streamID]
 	sizeMap.locker.RUnlock()
 	return size, ok
 }
@@ -76,11 +76,11 @@ func (sizeMap *int64LockMap) mergeMap(count int) bool {
 	return true
 }
 
-func (sizeMap *int64LockMap) CloneMap() (map[string]int64, Version) {
+func (sizeMap *int64LockMap) CloneMap() (map[int64]int64, Version) {
 	sizeMap.cloneLocker.Lock()
 	sizeMap.locker.Lock()
-	sizeMap.level0 = make(map[string]int64, 1024)
-	cloneMap := make(map[string]int64, len(sizeMap.level1))
+	sizeMap.level0 = make(map[int64]int64, 1024)
+	cloneMap := make(map[int64]int64, len(sizeMap.level1))
 	ver := sizeMap.version
 	sizeMap.locker.Unlock()
 	defer func() {

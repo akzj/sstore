@@ -11,13 +11,13 @@ type endWatcher struct {
 }
 
 type notify struct {
-	name string
-	end  int64
+	streamID int64
+	end      int64
 }
 
 type endWatchers struct {
 	watchIndex     int64
-	endWatcherMap  map[string][]endWatcher
+	endWatcherMap  map[int64][]endWatcher
 	endWatcherLock *sync.RWMutex
 
 	l           *sync.Mutex
@@ -38,14 +38,14 @@ func newEndWatchers() *endWatchers {
 		cond:           sync.NewCond(l),
 		endWatcherLock: new(sync.RWMutex),
 		notifyItems:    make([]*notify, 0, 1024),
-		endWatcherMap:  make(map[string][]endWatcher),
+		endWatcherMap:  make(map[int64][]endWatcher),
 		s:              make(chan interface{}, 1),
 	}
 }
-func (endWatchers *endWatchers) removeEndWatcher(index int64, name string) {
+func (endWatchers *endWatchers) removeEndWatcher(index int64, streamID int64) {
 	endWatchers.endWatcherLock.Lock()
 	defer endWatchers.endWatcherLock.Unlock()
-	endWatcherS, ok := endWatchers.endWatcherMap[name]
+	endWatcherS, ok := endWatchers.endWatcherMap[streamID]
 	if ok == false {
 		return
 	}
@@ -54,13 +54,13 @@ func (endWatchers *endWatchers) removeEndWatcher(index int64, name string) {
 			copy(endWatcherS[i:], endWatcherS[i+1:])
 			endWatcherS[len(endWatcherS)-1] = endWatcher{}
 			endWatcherS = endWatcherS[:len(endWatcherS)-1]
-			endWatchers.endWatcherMap[name] = endWatcherS
+			endWatchers.endWatcherMap[streamID] = endWatcherS
 			break
 		}
 	}
 }
 
-func (endWatchers *endWatchers) newEndWatcher(name string) *endWatcher {
+func (endWatchers *endWatchers) newEndWatcher(streamID int64) *endWatcher {
 	endWatchers.endWatcherLock.Lock()
 	defer endWatchers.endWatcherLock.Unlock()
 	endWatchers.watchIndex++
@@ -69,16 +69,16 @@ func (endWatchers *endWatchers) newEndWatcher(name string) *endWatcher {
 		index:  index,
 		int64s: make(chan int64, 1),
 		c: func() {
-			endWatchers.removeEndWatcher(index, name)
+			endWatchers.removeEndWatcher(index, streamID)
 		},
 	}
-	endWatchers.endWatcherMap[name] = append(endWatchers.endWatcherMap[name], watcher)
+	endWatchers.endWatcherMap[streamID] = append(endWatchers.endWatcherMap[streamID], watcher)
 	return &watcher
 }
 
-func (endWatchers *endWatchers) getEndWatcher(name string) []endWatcher {
+func (endWatchers *endWatchers) getEndWatcher(streamID int64) []endWatcher {
 	endWatchers.endWatcherLock.RLock()
-	watcher, _ := endWatchers.endWatcherMap[name]
+	watcher, _ := endWatchers.endWatcherMap[streamID]
 	endWatchers.endWatcherLock.RUnlock()
 	return watcher
 }
@@ -106,7 +106,7 @@ func (endWatchers *endWatchers) start() {
 					close(endWatchers.s)
 					return
 				}
-				for _, watcher := range endWatchers.getEndWatcher(item.name) {
+				for _, watcher := range endWatchers.getEndWatcher(item.streamID) {
 					watcher.notify(item.end)
 				}
 				notifyPool.Put(item)

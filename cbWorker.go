@@ -37,7 +37,7 @@ func (worker *cbWorker) start() {
 					panic(e)
 				}
 				if e.cb == nil {
-					panic(fmt.Sprintf("%d %s", e.ID, e.name))
+					panic(fmt.Sprintf("entry.ID %d entry.streamID%d", e.ID, e.StreamID))
 				}
 				e.cb(e.pos, nil)
 			}

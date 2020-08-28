@@ -19,18 +19,18 @@ import (
 )
 
 type reader struct {
-	offset int64
-	name   string
-	index  *offsetIndex
-	endMap *int64LockMap
+	offset   int64
+	streamID int64
+	index    *offsetIndex
+	endMap   *int64LockMap
 }
 
-func newReader(name string, index *offsetIndex, endMap *int64LockMap) *reader {
+func newReader(streamID int64, index *offsetIndex, endMap *int64LockMap) *reader {
 	return &reader{
-		offset: 0,
-		name:   name,
-		index:  index,
-		endMap: endMap,
+		offset:   0,
+		streamID: streamID,
+		index:    index,
+		endMap:   endMap,
 	}
 }
 
@@ -42,7 +42,7 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		offset += r.offset
 	case io.SeekEnd:
-		limit, ok := r.endMap.get(r.name)
+		limit, ok := r.endMap.get(r.streamID)
 		if !ok {
 			panic("no find stream end")
 		}
@@ -76,7 +76,7 @@ func (r *reader) Read(p []byte) (n int, err error) {
 			if item.segment.refInc() < 0 {
 				return ret, errors.WithStack(errOffSet)
 			}
-			n, err := item.segment.Reader(r.name).ReadAt(buf, r.offset)
+			n, err := item.segment.Reader(r.streamID).ReadAt(buf, r.offset)
 			item.segment.refDec()
 			if err != nil {
 				return ret, err
