@@ -25,5 +25,6 @@ var (
 	errNoFindSegment     = errors.New("no find segment")
 	errWhence            = errors.New("whence error")
 	ErrWal               = errors.New("journal error")
+	ErrOffset            = errors.New("offset error")
 	errClose             = errors.New("SStore close")
 )

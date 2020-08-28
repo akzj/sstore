@@ -14,7 +14,6 @@
 package sstore
 
 import (
-	"github.com/pkg/errors"
 	"log"
 	"path/filepath"
 	"sync"
@@ -167,7 +166,7 @@ func (c *committer) start() {
 				}
 				mStream, end := c.mutableMStreamMap.appendEntry(e)
 				if end == -1 {
-					e.err = errors.Errorf("stream_id offset error")
+					e.err = ErrOffset
 					continue
 				}
 				e.end = end
