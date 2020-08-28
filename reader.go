@@ -37,7 +37,7 @@ func newReader(streamID int64, index *offsetIndex, endMap *int64LockMap) *reader
 func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	default:
-		return 0, errWhence
+		return 0, ErrWhence
 	case io.SeekStart:
 	case io.SeekCurrent:
 		offset += r.offset
@@ -50,7 +50,7 @@ func (r *reader) Seek(offset int64, whence int) (int64, error) {
 	}
 	begin, ok := r.index.begin()
 	if ok && offset < begin {
-		return 0, errOffSet
+		return 0, ErrOffset
 	}
 	r.offset = offset
 	return offset, nil
@@ -74,7 +74,7 @@ func (r *reader) Read(p []byte) (n int, err error) {
 			r.offset += int64(n)
 		} else if item.segment != nil {
 			if item.segment.refInc() < 0 {
-				return ret, errors.WithStack(errOffSet)
+				return ret, errors.WithStack(ErrOffset)
 			}
 			n, err := item.segment.Reader(r.streamID).ReadAt(buf, r.offset)
 			item.segment.refDec()

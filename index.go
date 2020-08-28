@@ -34,7 +34,7 @@ func (index *offsetIndex) find(offset int64) (offsetItem, error) {
 	index.l.RLock()
 	defer index.l.RUnlock()
 	if len(index.items) == 0 {
-		return offsetIndexNoFind, errors.WithStack(errNoFindOffsetIndex)
+		return offsetIndexNoFind, errors.WithStack(ErrNoFindOffsetIndex)
 	}
 	if index.items[len(index.items)-1].begin <= offset {
 		return index.items[len(index.items)-1], nil

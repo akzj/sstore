@@ -99,7 +99,7 @@ func (c *committer) deleteSegment(filename string) error {
 	defer c.segmentsLocker.Unlock()
 	segment, ok := c.segments[filename]
 	if ok == false {
-		return errNoFindSegment
+		return ErrNoFindSegment
 	}
 	delete(c.segments, filename)
 	if err := c.indexTable.remove1(segment); err != nil {

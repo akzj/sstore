@@ -125,7 +125,7 @@ func (s *segment) lastEntryID() int64 {
 func (s *segment) offsetInfo(streamID int64) (offsetInfo, error) {
 	indexInfo, ok := s.meta.OffSetInfos[streamID]
 	if ok == false {
-		return indexInfo, errNoFindIndexInfo
+		return indexInfo, ErrNoFindIndexInfo
 	}
 	return indexInfo, nil
 }
@@ -213,7 +213,7 @@ type segmentReader struct {
 
 func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
 	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
-		return 0, errOffSet
+		return 0, ErrOffset
 	}
 	offset = offset - s.indexInfo.Begin
 	return s.r.Seek(offset, whence)
@@ -221,7 +221,7 @@ func (s *segmentReader) Seek(offset int64, whence int) (int64, error) {
 
 func (s *segmentReader) ReadAt(p []byte, offset int64) (n int, err error) {
 	if offset < s.indexInfo.Begin || offset >= s.indexInfo.End {
-		return 0, errors.Wrapf(errOffSet,
+		return 0, errors.Wrapf(ErrOffset,
 			fmt.Sprintf("offset[%d] begin[%d] end[%d]",
 				offset, s.indexInfo.Begin, s.indexInfo.End))
 	}

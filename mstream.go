@@ -49,7 +49,7 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 	m.locker.RLock()
 	defer m.locker.RUnlock()
 	if off < m.begin || off > m.end {
-		return 0, errors.Wrapf(errOffSet,
+		return 0, errors.Wrapf(ErrOffset,
 			"offset[%d] begin[%d] end[%d]", off, m.begin, m.end)
 	}
 	if off == m.end {
