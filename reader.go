@@ -27,9 +27,10 @@ type reader struct {
 
 func newReader(name string, index *offsetIndex, endMap *int64LockMap) *reader {
 	return &reader{
+		offset: 0,
 		name:   name,
 		index:  index,
-		offset: 0,
+		endMap: endMap,
 	}
 }
 

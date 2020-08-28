@@ -37,7 +37,7 @@ type committer struct {
 
 	indexTable  *indexTable
 	endWatchers *endWatchers
-	files       *files
+	files       *manifest
 
 	blockSize int
 
@@ -52,7 +52,7 @@ func newCommitter(options Options,
 	sizeMap *int64LockMap,
 	mutableMStreamMap *mStreamTable,
 	queue *entryQueue,
-	files *files,
+	files *manifest,
 	blockSize int) *committer {
 
 	cbQueue := newEntryQueue(128)

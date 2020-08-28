@@ -23,7 +23,7 @@ import (
 
 const version1 = "ver1"
 
-type walHeader struct {
+type JournalMeta struct {
 	Old          bool   `json:"old"`
 	Filename     string `json:"filename"`
 	Version      string `json:"version"`
@@ -32,15 +32,15 @@ type walHeader struct {
 }
 
 // write ahead log
-type wal struct {
+type journal struct {
 	filename string
 	size     int64
 	f        *os.File
 	writer   *bufio.Writer
-	header   walHeader
+	meta     JournalMeta
 }
 
-func openWal(filename string) (*wal, error) {
+func openJournal(filename string) (*journal, error) {
 	f, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -48,12 +48,12 @@ func openWal(filename string) (*wal, error) {
 	if err := f.Sync(); err != nil {
 		return nil, err
 	}
-	w := &wal{
+	w := &journal{
 		filename: filename,
 		size:     0,
 		f:        f,
 		writer:   bufio.NewWriterSize(f, 4*1024*1024),
-		header: walHeader{
+		meta: JournalMeta{
 			Filename:     filepath.Base(filename),
 			Version:      version1,
 			FirstEntryID: -1,
@@ -64,70 +64,70 @@ func openWal(filename string) (*wal, error) {
 	return w, nil
 }
 
-func (wal *wal) seekStart() error {
-	if _, err := wal.f.Seek(0, io.SeekStart); err != nil {
+func (j *journal) SeekStart() error {
+	if _, err := j.f.Seek(0, io.SeekStart); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func (wal *wal) seekEnd() error {
-	if _, err := wal.f.Seek(0, io.SeekEnd); err != nil {
+func (j *journal) SeekEnd() error {
+	if _, err := j.f.Seek(0, io.SeekEnd); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func (wal *wal) getHeader() walHeader {
-	return wal.header
+func (j *journal) GetMeta() JournalMeta {
+	return j.meta
 }
 
-func (wal *wal) flush() error {
-	if err := wal.writer.Flush(); err != nil {
+func (j *journal) Flush() error {
+	if err := j.writer.Flush(); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func (wal *wal) sync() error {
-	if err := wal.f.Sync(); err != nil {
+func (j *journal) Sync() error {
+	if err := j.f.Sync(); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func (wal *wal) write(e *entry) error {
-	wal.header.LastEntryID = e.ID
-	if wal.header.FirstEntryID == -1 {
-		wal.header.FirstEntryID = e.ID
+func (j *journal) Write(e *entry) error {
+	j.meta.LastEntryID = e.ID
+	if j.meta.FirstEntryID == -1 {
+		j.meta.FirstEntryID = e.ID
 	}
-	if err := e.write(wal.writer); err != nil {
+	if err := e.write(j.writer); err != nil {
 		return err
 	}
-	wal.size += int64(e.size())
+	j.size += int64(e.size())
 	return nil
 }
 
-func (wal *wal) fileSize() int64 {
-	return wal.size
+func (j *journal) Size() int64 {
+	return j.size
 }
 
-func (wal *wal) close() error {
-	if err := wal.flush(); err != nil {
+func (j *journal) Close() error {
+	if err := j.Flush(); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := wal.f.Close(); err != nil {
+	if err := j.f.Close(); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func (wal *wal) Filename() string {
-	return wal.filename
+func (j *journal) Filename() string {
+	return j.filename
 }
 
-func (wal *wal) read(cb func(e *entry) error) error {
-	reader := bufio.NewReader(wal.f)
+func (j *journal) Read(cb func(e *entry) error) error {
+	reader := bufio.NewReader(j.f)
 	for {
 		e, err := decodeEntry(reader)
 		if err != nil {

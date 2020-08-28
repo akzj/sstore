@@ -32,23 +32,23 @@ func mkdir(dir string) error {
 	return nil
 }
 
-//reload segment,wal,index
+//reload segment,journal,index
 func reload(sStore *SStore) error {
 	for _, dir := range []string{
 		sStore.options.WalDir,
-		sStore.options.FilesDir,
+		sStore.options.ManifestDir,
 		sStore.options.SegmentDir} {
 		if err := mkdir(dir); err != nil {
 			return err
 		}
 	}
-	files, err := openFiles(sStore.options.FilesDir,
+	manifest, err := openManifest(sStore.options.ManifestDir,
 		sStore.options.SegmentDir,
 		sStore.options.WalDir)
 	if err != nil {
 		return err
 	}
-	sStore.files = files
+	sStore.files = manifest
 
 	mStreamTable := newMStreamTable(sStore.endMap, sStore.options.BlockSize, 128)
 	commitQueue := newEntryQueue(sStore.options.EntryQueueCap)
@@ -59,7 +59,7 @@ func reload(sStore *SStore) error {
 		sStore.endMap,
 		mStreamTable,
 		commitQueue,
-		files,
+		manifest,
 		sStore.options.BlockSize)
 	sStore.committer = committer
 
@@ -68,7 +68,7 @@ func reload(sStore *SStore) error {
 	sStore.endWatchers.start()
 
 	//rebuild segment index
-	segmentFiles := files.getSegmentFiles()
+	segmentFiles := manifest.getSegmentFiles()
 	for _, file := range segmentFiles {
 		segment, err := openSegment(filepath.Join(sStore.options.SegmentDir, file))
 		if err != nil {
@@ -88,21 +88,21 @@ func reload(sStore *SStore) error {
 		}
 	}
 
-	//replay entries in the wal
-	walFiles := files.getWalFiles()
+	//replay entries in the journal
+	walFiles := manifest.getWalFiles()
 	var cb = func(int64, error) {}
 	for _, filename := range walFiles {
-		wal, err := openWal(filepath.Join(sStore.options.WalDir, filename))
+		journal, err := openJournal(filepath.Join(sStore.options.WalDir, filename))
 		if err != nil {
 			return err
 		}
 		//skip
-		if walHeader, err := files.getWalHeader(filename); err == nil {
+		if walHeader, err := manifest.getWalHeader(filename); err == nil {
 			if walHeader.Old && walHeader.LastEntryID <= sStore.entryID {
 				continue
 			}
 		}
-		if err := wal.read(func(e *entry) error {
+		if err := journal.Read(func(e *entry) error {
 			if e.ID <= sStore.entryID {
 				return nil //skip
 			} else if e.ID == sStore.entryID+1 {
@@ -115,31 +115,31 @@ func reload(sStore *SStore) error {
 			}
 			return nil
 		}); err != nil {
-			_ = wal.close()
+			_ = journal.Close()
 			return err
 		}
-		if err := wal.close(); err != nil {
+		if err := journal.Close(); err != nil {
 			return err
 		}
 	}
 
-	//create wal writer
-	var w *wal
+	//create journal writer
+	var w *journal
 	if len(walFiles) > 0 {
-		w, err = openWal(filepath.Join(sStore.options.WalDir, walFiles[len(walFiles)-1]))
+		w, err = openJournal(filepath.Join(sStore.options.WalDir, walFiles[len(walFiles)-1]))
 		if err != nil {
 			return err
 		}
-		if err := w.seekEnd(); err != nil {
+		if err := w.SeekEnd(); err != nil {
 			return errors.WithStack(err)
 		}
 	} else {
-		file := files.getNextWal()
-		w, err = openWal(file)
+		file := manifest.getNextWal()
+		w, err = openJournal(file)
 		if err != nil {
 			return err
 		}
-		if err := files.appendWal(appendWal{Filename: file}); err != nil {
+		if err := manifest.appendWal(appendWal{Filename: file}); err != nil {
 			return err
 		}
 	}
@@ -147,9 +147,9 @@ func reload(sStore *SStore) error {
 		sStore.committer.queue, sStore.files, sStore.options.MaxWalSize)
 	sStore.wWriter.start()
 
-	//clear dead wal
-	walFiles = files.getWalFiles()
-	walFileAll, err := listDir(sStore.options.WalDir, WalExt)
+	//clear dead journal
+	walFiles = manifest.getWalFiles()
+	walFileAll, err := listDir(sStore.options.WalDir, manifestExt)
 	if err != nil {
 		return err
 	}
@@ -160,8 +160,8 @@ func reload(sStore *SStore) error {
 		fmt.Println("delete filename " + filename)
 	}
 
-	//clear dead segment files
-	segmentFiles = files.getSegmentFiles()
+	//clear dead segment manifest
+	segmentFiles = manifest.getSegmentFiles()
 	segmentFileAll, err := listDir(sStore.options.SegmentDir, segmentExt)
 	if err != nil {
 		return err

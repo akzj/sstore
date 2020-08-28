@@ -76,7 +76,7 @@ func (sizeMap *int64LockMap) mergeMap(count int) bool {
 	return true
 }
 
-func (sizeMap *int64LockMap) cloneMap() (map[string]int64, Version) {
+func (sizeMap *int64LockMap) CloneMap() (map[string]int64, Version) {
 	sizeMap.cloneLocker.Lock()
 	sizeMap.locker.Lock()
 	sizeMap.level0 = make(map[string]int64, 1024)

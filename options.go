@@ -20,11 +20,11 @@ import (
 
 type Options struct {
 	Path                          string `json:"path"`
-	FilesDir                      string `json:"files_dir"`
+	ManifestDir                   string `json:"manifest_dir"`
 	WalDir                        string `json:"wal_dir"`
 	SegmentDir                    string `json:"segment_dir"`
 	MaxSegmentCount               int    `json:"max_segment_count"`
-	BlockSize                     int  `json:"block_size"`
+	BlockSize                     int    `json:"block_size"`
 	MaxMStreamTableSize           int64  `json:"max_mStream_table_size"`
 	MaxImmutableMStreamTableCount int    `json:"max_immutable_mStream_table_count"`
 	EntryQueueCap                 int    `json:"entry_queue_cap"`
@@ -37,9 +37,9 @@ const KB = 1024
 func DefaultOptions(Path string) Options {
 	return Options{
 		Path:                          Path,
-		FilesDir:                      filepath.Join(Path, "files"),
-		WalDir:                        filepath.Join(Path, "wals"),
-		SegmentDir:                    filepath.Join(Path, "segments"),
+		ManifestDir:                   filepath.Join(Path, "manifest"),
+		WalDir:                        filepath.Join(Path, "journal"),
+		SegmentDir:                    filepath.Join(Path, "segment"),
 		MaxSegmentCount:               math.MaxInt32,
 		BlockSize:                     4 * KB,
 		MaxMStreamTableSize:           256 * MB,
@@ -51,7 +51,7 @@ func DefaultOptions(Path string) Options {
 
 //WithFilesDir
 func (opt Options) WithFilesDir(val string) Options {
-	opt.FilesDir = val
+	opt.ManifestDir = val
 	return opt
 }
 

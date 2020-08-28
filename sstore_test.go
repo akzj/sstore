@@ -79,16 +79,16 @@ func TestWalHeader(t *testing.T) {
 		os.RemoveAll("data")
 	}()
 	os.MkdirAll("data", 0777)
-	wal, err := openWal("data/1.log")
+	wal, err := openJournal("data/1.log")
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	if err := wal.write(&entry{ID: 1000}); err != nil {
+	if err := wal.Write(&entry{ID: 1000}); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	header := wal.getHeader()
+	header := wal.GetMeta()
 	if header.LastEntryID != 1000 {
-		t.Fatalf("%d %d", wal.getHeader().LastEntryID, 1000)
+		t.Fatalf("%d %d", wal.GetMeta().LastEntryID, 1000)
 	}
 	if header.Filename != "1.log" {
 		t.Fatalf(header.Filename)

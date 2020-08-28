@@ -26,21 +26,21 @@ type mStream struct {
 	name      string
 	begin     int64
 	end       int64
-	blocks    []block
+	bufPages  []bufPage
 	blockSize int
 }
 
 const mStreamEnd = math.MaxInt64
 
 func newMStream(begin int64, blockSize int, name string) *mStream {
-	blocks := make([]block, 0, 128)
-	blocks = append(blocks, makeBlock(begin, blockSize))
+	blocks := make([]bufPage, 0, 128)
+	blocks = append(blocks, newPage(begin, blockSize))
 	return &mStream{
 		locker:    sync.RWMutex{},
 		name:      name,
 		begin:     begin,
 		end:       begin,
-		blocks:    blocks,
+		bufPages:  blocks,
 		blockSize: blockSize,
 	}
 }
@@ -61,13 +61,13 @@ func (m *mStream) ReadAt(p []byte, off int64) (n int, err error) {
 
 	var ret int
 	for len(p) > 0 {
-		block := &m.blocks[index]
+		block := &m.bufPages[index]
 		n := copy(p, block.buf[offset:block.limit])
 		offset = 0
 		ret += n
 		p = p[n:]
 		index++
-		if index >= int64(len(m.blocks)) {
+		if index >= int64(len(m.bufPages)) {
 			break
 		}
 	}
@@ -81,10 +81,10 @@ func (m *mStream) write(p []byte) int64 {
 	m.locker.Lock()
 	defer m.locker.Unlock()
 	for len(p) > 0 {
-		if m.blocks[len(m.blocks)-1].limit == m.blockSize {
-			m.blocks = append(m.blocks, makeBlock(m.end, m.blockSize))
+		if m.bufPages[len(m.bufPages)-1].limit == m.blockSize {
+			m.bufPages = append(m.bufPages, newPage(m.end, m.blockSize))
 		}
-		block := &m.blocks[len(m.blocks)-1]
+		block := &m.bufPages[len(m.bufPages)-1]
 		n := copy(block.buf[block.limit:], p)
 		block.limit += n
 		m.end += int64(n)
@@ -97,8 +97,8 @@ func (m *mStream) writeTo(writer io.Writer) (int, error) {
 	m.locker.RLock()
 	defer m.locker.RUnlock()
 	var n int
-	for i := range m.blocks {
-		ret, err := (&m.blocks[i]).writeTo(writer)
+	for i := range m.bufPages {
+		ret, err := (&m.bufPages[i]).writeTo(writer)
 		n += ret
 		if err != nil {
 			return n, err
@@ -107,20 +107,20 @@ func (m *mStream) writeTo(writer io.Writer) (int, error) {
 	return n, nil
 }
 
-type block struct {
+type bufPage struct {
 	limit int
 	begin int64
 	buf   []byte
 }
 
-func makeBlock(begin int64, blockSize int) block {
-	return block{
+func newPage(begin int64, blockSize int) bufPage {
+	return bufPage{
 		limit: 0,
 		begin: begin,
 		buf:   make([]byte, blockSize),
 	}
 }
 
-func (block *block) writeTo(writer io.Writer) (int, error) {
-	return writer.Write(block.buf[:block.limit])
+func (p *bufPage) writeTo(writer io.Writer) (int, error) {
+	return writer.Write(p.buf[:p.limit])
 }
