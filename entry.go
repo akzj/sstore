@@ -34,7 +34,7 @@ type entry struct {
 	data     []byte
 	end      int64
 	err      error
-	cb       func(pos int64, err error)
+	cb       func(end int64, err error)
 }
 
 var entriesPool = sync.Pool{New: func() interface{} {
