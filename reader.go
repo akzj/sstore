@@ -79,7 +79,9 @@ func (r *reader) Read(p []byte) (n int, err error) {
 			n, err := item.segment.Reader(r.streamID).ReadAt(buf, r.offset)
 			item.segment.refDec()
 			if err != nil {
-				return ret, err
+				if !(err == io.EOF && n > 0) {
+					return ret, err
+				}
 			}
 			buf = buf[n:]
 			ret += n
